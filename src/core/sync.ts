@@ -9,12 +9,17 @@ import { ui } from "../ui/console";
 import { resolvePath } from "../utils";
 import { determineSyncAction } from "./decision";
 import { DriveFile, FileMetadata, SyncAction, SyncTask } from "../types";
-import { LOCAL_SYNC_PATH, METADATA_FILE_NAME, REMOTE_FOLDER_ID, loadConfig, PERIODIC_SYNC_INTERVAL_MS } from "../config";
+import { Config } from "../config";
 import { retryOperation } from "../utils";
 
-export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFile>, metadata: Map<string, FileMetadata>) {
-	const resolvedLocalPath = resolvePath(LOCAL_SYNC_PATH);
-	if (!resolvedLocalPath || !REMOTE_FOLDER_ID) {
+export async function sync(
+	auth: OAuth2Client,
+	remoteFiles: Map<string, DriveFile>,
+	metadata: Map<string, FileMetadata>,
+	config: Config
+) {
+	const resolvedLocalPath = resolvePath(config.LOCAL_SYNC_PATH!);
+	if (!resolvedLocalPath || !config.REMOTE_FOLDER_ID) {
 		const errorMessage = "Error: LOCAL_SYNC_PATH and REMOTE_FOLDER_ID must be configured.";
 		logger.error(errorMessage);
 		return;
@@ -25,7 +30,7 @@ export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFil
 	ui.updateStatus("Starting sync cycle...");
 
 	// --- Metadata Loading ---
-	const metadataPath = path.join(resolvedLocalPath, METADATA_FILE_NAME);
+	const metadataPath = path.join(resolvedLocalPath, config.METADATA_FILE_NAME!);
 	try {
 		const data = await fs.readFile(metadataPath, "utf-8");
 		metadata = new Map(JSON.parse(data));
@@ -36,13 +41,16 @@ export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFil
 	}
 
 	// --- Load config and prepare ignore patterns ---
-	const config = await loadConfig();
 	const ignorePatterns = (config.ignore || []).map((pattern) => new RegExp(pattern));
 
 	// --- File Scanning ---
 	let [localFiles, currentRemoteFiles] = await Promise.all([
-		getLocalFilesRecursive(resolvedLocalPath, ignorePatterns, (path) => ui.updateStatus(`Scanning local: /${path}`)),
-		listFilesRecursive(auth, REMOTE_FOLDER_ID, ignorePatterns, (path) => ui.updateStatus(`Scanning remote: /${path}`)),
+		getLocalFilesRecursive(resolvedLocalPath, ignorePatterns, (path) =>
+			ui.updateStatus(`Scanning local: /${path}`)
+		),
+		listFilesRecursive(auth, config.REMOTE_FOLDER_ID!, ignorePatterns, (path) =>
+			ui.updateStatus(`Scanning remote: /${path}`)
+		),
 	]);
 
 	// Update the shared remoteFiles map with the latest scan
@@ -65,7 +73,7 @@ export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFil
 		for (const folder of localFoldersToCreate) {
 			const parentPath = path.dirname(folder.path);
 			const parentFolder = remoteFiles.get(parentPath);
-			const parentFolderId = parentPath === "." ? REMOTE_FOLDER_ID : parentFolder?.id;
+			const parentFolderId = parentPath === "." ? config.REMOTE_FOLDER_ID! : parentFolder?.id;
 			if (parentFolderId) {
 				try {
 					const newFolder = await createFolder(auth, parentFolderId, path.basename(folder.path));
@@ -127,7 +135,7 @@ export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFil
 					case SyncAction.UPLOAD_CONFLICT:
 						const parentPath = path.dirname(task.filePath);
 						const parentFolder = remoteFiles.get(parentPath);
-						const parentFolderId = parentPath === "." ? REMOTE_FOLDER_ID : parentFolder?.id;
+						const parentFolderId = parentPath === "." ? config.REMOTE_FOLDER_ID! : parentFolder?.id;
 
 						if (!parentFolderId) {
 							throw new Error(`Could not find remote parent folder for ${task.filePath}`);
@@ -156,6 +164,6 @@ export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFil
 		logger.error(`Error saving sync metadata: ${e.message}`);
 	}
 
-	ui.startIdleCountdown(PERIODIC_SYNC_INTERVAL_MS);
 	logger.info("Sync cycle finished.");
+	ui.startIdleCountdown(config.PERIODIC_SYNC_INTERVAL_MS!);
 }

@@ -4,10 +4,10 @@ import { promises as fs } from "fs";
 import { OAuth2Client } from "google-auth-library";
 
 import { deleteFile, uploadOrUpdateFile } from "../api/driveApi";
-import { WATCH_DEBOUNCE_DELAY, REMOTE_FOLDER_ID, PERIODIC_SYNC_INTERVAL_MS } from "../config";
-import logger from "../services/logger";
 import { DriveFile, FileMetadata } from "../types";
+import { Config } from "../config";
 import { ui } from "../ui/console";
+import logger from "../services/logger";
 
 let syncTimeout: NodeJS.Timeout | null = null;
 
@@ -16,10 +16,13 @@ export function watchLocalFiles(
 	auth: OAuth2Client,
 	remoteFiles: Map<string, DriveFile>,
 	metadata: Map<string, FileMetadata>,
-	ignorePatterns: RegExp[]
+	config: Config
 ) {
 	const watcher = chokidar.watch(localPath, {
-		ignored: [/(^|[\\/])\.gdrive-sync-metadata\.json$/, ...ignorePatterns],
+		ignored: [
+			/(^|[\\/])\.az-gdrive-sync-metadata\.json$/,
+			...(config.ignore || []).map((pattern) => new RegExp(pattern)),
+		],
 		persistent: true,
 		ignoreInitial: true, // Don't trigger on initial scan
 	});
@@ -48,7 +51,7 @@ export function watchLocalFiles(
 						logger.info(`[UPLOAD] Starting: ${relativePath}`);
 						const parentPath = path.dirname(relativePath);
 						const parentFolder = remoteFiles.get(parentPath);
-						const parentFolderId = parentPath === "." ? REMOTE_FOLDER_ID : parentFolder?.id;
+						const parentFolderId = parentPath === "." ? config.REMOTE_FOLDER_ID! : parentFolder?.id;
 
 						if (!parentFolderId) {
 							throw new Error(`Could not find remote parent folder for ${relativePath}`);
@@ -77,14 +80,14 @@ export function watchLocalFiles(
 						}
 						break;
 				}
-				ui.startIdleCountdown(PERIODIC_SYNC_INTERVAL_MS);
+				ui.startIdleCountdown(config.PERIODIC_SYNC_INTERVAL_MS!);
 			} catch (error: any) {
 				const errorMessage = `[FAILED] Local change action for ${relativePath}. Error: ${error.message}`;
 				logger.error(errorMessage);
 				ui.updateStatus("Error processing change. Check logs.");
 			}
 			syncTimeout = null;
-		}, WATCH_DEBOUNCE_DELAY);
+		}, config.WATCH_DEBOUNCE_DELAY!);
 	});
 
 	logger.info(`Watching for local changes in: ${localPath}`);
