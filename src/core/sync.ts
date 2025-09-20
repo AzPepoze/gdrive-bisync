@@ -9,22 +9,20 @@ import { ui } from "../ui/console";
 import { resolvePath } from "../utils";
 import { determineSyncAction } from "./decision";
 import { DriveFile, FileMetadata, SyncAction, SyncTask } from "../types";
-import { LOCAL_SYNC_PATH, METADATA_FILE_NAME, REMOTE_FOLDER_ID, loadConfig } from "../config";
+import { LOCAL_SYNC_PATH, METADATA_FILE_NAME, REMOTE_FOLDER_ID, loadConfig, PERIODIC_SYNC_INTERVAL_MS } from "../config";
 import { retryOperation } from "../utils";
 
 export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFile>, metadata: Map<string, FileMetadata>) {
 	const resolvedLocalPath = resolvePath(LOCAL_SYNC_PATH);
 	if (!resolvedLocalPath || !REMOTE_FOLDER_ID) {
 		const errorMessage = "Error: LOCAL_SYNC_PATH and REMOTE_FOLDER_ID must be configured.";
-		ui.logEvent("ERROR", errorMessage);
 		logger.error(errorMessage);
 		return;
 	}
 	await fs.mkdir(resolvedLocalPath, { recursive: true });
 
-	ui.updateStatus("Active");
-	ui.updateProgress({ currentActivity: "Starting sync cycle..." });
 	logger.info("Starting sync cycle...");
+	ui.updateStatus("Starting sync cycle...");
 
 	// --- Metadata Loading ---
 	const metadataPath = path.join(resolvedLocalPath, METADATA_FILE_NAME);
@@ -42,10 +40,9 @@ export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFil
 	const ignorePatterns = (config.ignore || []).map((pattern) => new RegExp(pattern));
 
 	// --- File Scanning ---
-	ui.updateProgress({ currentActivity: "Scanning local and remote files..." });
 	let [localFiles, currentRemoteFiles] = await Promise.all([
-		getLocalFilesRecursive(resolvedLocalPath, ignorePatterns),
-		listFilesRecursive(auth, REMOTE_FOLDER_ID, ignorePatterns),
+		getLocalFilesRecursive(resolvedLocalPath, ignorePatterns, (path) => ui.updateStatus(`Scanning local: /${path}`)),
+		listFilesRecursive(auth, REMOTE_FOLDER_ID, ignorePatterns, (path) => ui.updateStatus(`Scanning remote: /${path}`)),
 	]);
 
 	// Update the shared remoteFiles map with the latest scan
@@ -64,7 +61,7 @@ export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFil
 
 	if (localFoldersToCreate.length > 0) {
 		logger.info(`Creating ${localFoldersToCreate.length} missing remote folders...`);
-		ui.logEvent("INFO", `Creating ${localFoldersToCreate.length} missing remote folders...`);
+		ui.updateStatus(`Creating ${localFoldersToCreate.length} remote folders...`);
 		for (const folder of localFoldersToCreate) {
 			const parentPath = path.dirname(folder.path);
 			const parentFolder = remoteFiles.get(parentPath);
@@ -97,40 +94,37 @@ export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFil
 		if (localFile?.isDirectory || remoteFile?.isDirectory) continue;
 
 		const action = determineSyncAction(filePath, localFile, remoteFile, metadata);
-		if (action !== SyncAction.SKIP_NO_CHANGE) {
+		if (action !== SyncAction.SKIP_NO_CHANGE && action !== SyncAction.SKIP_IDENTICAL) {
 			tasks.push({ action, filePath });
 		}
 	}
 
-	// --- 3. Execute All Sync Tasks with Concurrency Limit ---
+	// --- 3. Execute All Sync Tasks ---
 	if (tasks.length === 0) {
 		logger.info("All files are up to date.");
-		ui.logEvent("INFO", "All files are up to date.");
 	} else {
 		logger.info(`Executing ${tasks.length} sync tasks...`);
-		ui.logEvent("INFO", `Executing ${tasks.length} sync tasks...`);
+		let completedTasks = 0;
 
-		const promises = tasks.map((task) =>
-			retryOperation(async () => {
+		const taskPromises = tasks.map(async (task) => {
+			await retryOperation(async () => {
 				const localFilePath = path.join(resolvedLocalPath, task.filePath);
 				const remoteFile = remoteFiles.get(task.filePath);
+				const actionString = SyncAction[task.action];
+
+				ui.updateStatus(`[${completedTasks + 1}/${tasks.length}] ${actionString}: ${task.filePath}`);
 
 				switch (task.action) {
 					case SyncAction.DOWNLOAD_NEW:
 					case SyncAction.DOWNLOAD_UPDATE:
-						ui.logEvent("INFO", `[DOWNLOAD] Starting: ${task.filePath}`);
 						await fs.mkdir(path.dirname(localFilePath), { recursive: true });
 						await downloadFile(auth, remoteFile!.id, localFilePath);
-						metadata.set(task.filePath, {
-							remoteMd5Checksum: remoteFile!.md5Checksum,
-						});
-						ui.logEvent("SUCCESS", `[DOWNLOAD] Success: ${task.filePath}`);
+						metadata.set(task.filePath, { remoteMd5Checksum: remoteFile!.md5Checksum });
 						break;
 
 					case SyncAction.UPLOAD_NEW:
 					case SyncAction.UPLOAD_UPDATE:
 					case SyncAction.UPLOAD_CONFLICT:
-						ui.logEvent("INFO", `[UPLOAD] Starting (${SyncAction[task.action]}): ${task.filePath}`);
 						const parentPath = path.dirname(task.filePath);
 						const parentFolder = remoteFiles.get(parentPath);
 						const parentFolderId = parentPath === "." ? REMOTE_FOLDER_ID : parentFolder?.id;
@@ -144,23 +138,14 @@ export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFil
 							folderId: parentFolderId,
 							fileId: remoteFile?.id,
 						});
-						metadata.set(task.filePath, {
-							remoteMd5Checksum: uploadedFile.md5Checksum,
-						});
-						ui.logEvent("SUCCESS", `[UPLOAD] Success: ${task.filePath}`);
-						break;
-
-					case SyncAction.SKIP_IDENTICAL:
-						ui.logEvent("INFO", `[SKIP] Identical content (MD5 match): ${task.filePath}`);
-						metadata.set(task.filePath, {
-							remoteMd5Checksum: remoteFile!.md5Checksum,
-						});
+						metadata.set(task.filePath, { remoteMd5Checksum: uploadedFile.md5Checksum });
 						break;
 				}
-			}, `Sync task for ${task.filePath}`)
-		);
+			}, `Sync task for ${task.filePath}`);
+			completedTasks++;
+		});
 
-		await Promise.all(promises);
+		await Promise.all(taskPromises);
 	}
 
 	// --- 4. Save Metadata ---
@@ -171,7 +156,6 @@ export async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFil
 		logger.error(`Error saving sync metadata: ${e.message}`);
 	}
 
-	ui.updateStatus("Idle");
-	ui.updateProgress({ currentActivity: "Sync cycle finished." });
+	ui.startIdleCountdown(PERIODIC_SYNC_INTERVAL_MS);
 	logger.info("Sync cycle finished.");
 }

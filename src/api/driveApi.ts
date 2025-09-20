@@ -5,13 +5,18 @@ import * as path from "path";
 import logger from "../services/logger";
 import { DriveFile, DriveFileMap } from "../types";
 
-export async function listFilesRecursive(auth: OAuth2Client, folderId: string, ignorePatterns: RegExp[] = []): Promise<DriveFileMap> {
+export async function listFilesRecursive(
+	auth: OAuth2Client,
+	folderId: string,
+	ignorePatterns: RegExp[] = [],
+	onProgress?: (path: string) => void
+): Promise<DriveFileMap> {
 	const drive = google.drive({ version: "v3", auth });
 	const fileMap: DriveFileMap = new Map();
 
 	async function traverse(currentFolderId: string, currentPath: string) {
+		onProgress?.(currentPath || "/");
 		let pageToken: string | undefined = undefined;
-		console.log(`Scanning folder: ${currentPath || "root"}`); // Log the current folder
 		const folderPromises: Promise<void>[] = []; // Array to hold promises for parallel folder traversals
 
 		do {
@@ -28,10 +33,8 @@ export async function listFilesRecursive(auth: OAuth2Client, folderId: string, i
 					const isDirectory = file.mimeType === "application/vnd.google-apps.folder";
 
 					// Check if the current entry (file or directory) should be ignored
-					if (ignorePatterns.some(pattern => pattern.test(filePath))) {
-						console.log(`Ignoring Drive file/folder: ${filePath} due to ignore pattern.`);
-						// If it's a directory and matches an ignore pattern, we should not traverse into it.
-						// If it's a file and matches, we just skip adding it.
+					if (ignorePatterns.some((pattern) => pattern.test(filePath))) {
+						logger.debug(`Ignoring Drive file/folder: ${filePath} due to ignore pattern.`);
 						continue;
 					}
 
@@ -89,10 +92,9 @@ export async function downloadFilesParallel(
 	filesToDownload: Array<{ fileId: string; destinationPath: string }>
 ): Promise<void> {
 	const downloadPromises = filesToDownload.map(async (fileInfo) => {
-		console.log(`Starting download for file ID: ${fileInfo.fileId} to ${fileInfo.destinationPath}`);
 		try {
 			await downloadFile(auth, fileInfo.fileId, fileInfo.destinationPath);
-			console.log(`Finished download for file ID: ${fileInfo.fileId}`);
+			logger.info(`Finished download for file ID: ${fileInfo.fileId}`);
 		} catch (error) {
 			console.error(`Error downloading file ID: ${fileInfo.fileId}`, error);
 			throw error; // Re-throw to indicate failure in Promise.all
