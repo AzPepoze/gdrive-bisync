@@ -1,4 +1,4 @@
-import logger from "./logger";
+import logger from "../services/logger";
 
 // A very basic UI implementation for demonstration
 class SimpleUI {

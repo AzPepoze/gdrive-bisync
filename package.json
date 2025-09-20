@@ -2,11 +2,12 @@
   "name": "az-gdrive",
   "version": "1.0.0",
   "description": "A custom Google Drive sync client.",
-  "main": "dist/mainSync.js",
+  "main": "dist/main.js",
   "scripts": {
-    "start": "node dist/mainSync.js",
-    "build": "esbuild src/mainSync.ts --bundle --platform=node --outfile=dist/mainSync.js --external:dotenv",
-    "dev": "esbuild src/mainSync.ts --bundle --platform=node --outfile=dist/mainSync.js --watch --external:dotenv"
+    "start": "node dist/main.js",
+    "authenticate": "node dist/setupAuth.js",
+    "build": "esbuild src/core/main.ts src/setupAuth.ts --bundle --platform=node --outdir=dist --external:dotenv",
+    "dev": "esbuild src/core/main.ts src/setupAuth.ts --bundle --platform=node --outdir=dist --watch --external:dotenv"
   },
   "keywords": [
     "google-drive",
@@ -20,6 +21,7 @@
     "gaxios": "^7.1.1",
     "google-auth-library": "^10.3.0",
     "googleapis": "^160.0.0",
+    "open": "^10.2.0",
     "p-limit": "^7.1.1",
     "winston": "^3.17.0"
   },

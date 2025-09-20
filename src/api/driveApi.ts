@@ -2,18 +2,8 @@ import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import { createReadStream, createWriteStream } from "fs";
 import * as path from "path";
-import logger from "./logger";
-
-export interface DriveFile {
-	id: string;
-	name: string;
-	path: string;
-	modifiedTime: string;
-	md5Checksum?: string;
-	isDirectory: boolean;
-}
-
-export type DriveFileMap = Map<string, DriveFile>;
+import logger from "../services/logger";
+import { DriveFile, DriveFileMap } from "../types";
 
 export async function listFilesRecursive(auth: OAuth2Client, folderId: string, ignorePatterns: RegExp[] = []): Promise<DriveFileMap> {
 	const drive = google.drive({ version: "v3", auth });

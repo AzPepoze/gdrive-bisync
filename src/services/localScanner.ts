@@ -2,15 +2,7 @@ import { promises as fs } from "fs";
 import * as path from "path";
 import { createHash } from "crypto";
 import { createReadStream } from "fs";
-
-export interface LocalFile {
-	path: string;
-	mtime: string;
-	md5Checksum?: string;
-	isDirectory: boolean;
-}
-
-export type LocalFileMap = Map<string, LocalFile>;
+import { LocalFile, LocalFileMap } from "../types";
 
 async function getFileMd5(filePath: string): Promise<string> {
 	return new Promise((resolve, reject) => {
