@@ -9,7 +9,7 @@ import { Config } from "../config";
 import { ui } from "../ui/console";
 import logger from "../services/logger";
 
-let syncTimeout: NodeJS.Timeout | null = null;
+let syncTimeout: { [key: string]: NodeJS.Timeout } = {};
 
 export function watchLocalFiles(
 	localPath: string,
@@ -33,11 +33,11 @@ export function watchLocalFiles(
 
 		ui.stopIdleCountdown();
 
-		if (syncTimeout) {
-			clearTimeout(syncTimeout);
+		if (syncTimeout[relativePath]) {
+			clearTimeout(syncTimeout[relativePath]);
 		}
 
-		syncTimeout = setTimeout(async () => {
+		syncTimeout[relativePath] = setTimeout(async () => {
 			const localFilePath = path.join(localPath, relativePath);
 			const remoteFile = remoteFiles.get(relativePath);
 
@@ -89,7 +89,7 @@ export function watchLocalFiles(
 				logger.error(errorMessage);
 				ui.updateStatus("Error processing change. Check logs.");
 			}
-			syncTimeout = null;
+			delete syncTimeout[relativePath];
 		}, config.WATCH_DEBOUNCE_DELAY!);
 	});
 

@@ -70,6 +70,7 @@ class InteractiveUI {
 	}
 
 	startIdleCountdown(durationInMs: number) {
+		ui.start();
 		logger.debug(`UI: Starting idle countdown for ${durationInMs}ms.`);
 		if (this.countdownInterval) {
 			clearInterval(this.countdownInterval);
@@ -104,6 +105,7 @@ class InteractiveUI {
 			this.countdownInterval = null;
 			logger.debug("UI: Cleared countdown interval.");
 		}
+		ui.stop();
 	}
 }
 
