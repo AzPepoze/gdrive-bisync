@@ -93,10 +93,10 @@ export async function sync(
 	}
 
 	// --- 2. Determine All Sync Tasks ---
-	const allFilePaths = new Set([...localFiles.keys(), ...remoteFiles.keys()]);
+	const allFilePaths = new Set([...Array.from(localFiles.keys()), ...Array.from(remoteFiles.keys())]);
 	const tasks: SyncTask[] = [];
 
-	for (const filePath of allFilePaths) {
+	for (const filePath of Array.from(allFilePaths)) {
 		const localFile = localFiles.get(filePath);
 		const remoteFile = remoteFiles.get(filePath);
 		if (localFile?.isDirectory || remoteFile?.isDirectory) continue;

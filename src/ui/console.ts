@@ -96,6 +96,15 @@ class InteractiveUI {
 		updateCountdown(); // Initial display
 		this.countdownInterval = setInterval(updateCountdown, 1000);
 	}
+
+	stopIdleCountdown() {
+		logger.debug("UI: Stopping idle countdown.");
+		if (this.countdownInterval) {
+			clearInterval(this.countdownInterval);
+			this.countdownInterval = null;
+			logger.debug("UI: Cleared countdown interval.");
+		}
+	}
 }
 
 export const ui = new InteractiveUI();

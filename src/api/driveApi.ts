@@ -3,7 +3,7 @@ import { OAuth2Client } from "google-auth-library";
 import { createReadStream, createWriteStream } from "fs";
 import * as path from "path";
 import logger from "../services/logger";
-import { DriveFile, DriveFileMap } from "../types";
+import { DriveFileMap } from "../types";
 
 export async function listFilesRecursive(
 	auth: OAuth2Client,
@@ -158,4 +158,3 @@ export async function deleteFile(auth: OAuth2Client, fileId: string): Promise<vo
 	const drive = google.drive({ version: "v3", auth });
 	await drive.files.delete({ fileId: fileId });
 }
-

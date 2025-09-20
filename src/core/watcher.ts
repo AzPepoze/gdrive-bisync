@@ -31,9 +31,12 @@ export function watchLocalFiles(
 		const relativePath = path.relative(localPath, filePath);
 		logger.info(`Local file change detected: ${event} ${relativePath}`);
 
+		ui.stopIdleCountdown();
+
 		if (syncTimeout) {
 			clearTimeout(syncTimeout);
 		}
+
 		syncTimeout = setTimeout(async () => {
 			const localFilePath = path.join(localPath, relativePath);
 			const remoteFile = remoteFiles.get(relativePath);
