@@ -15,9 +15,24 @@ const LOCAL_SYNC_PATH = "~/GoogleDrive2";
 const REMOTE_FOLDER_ID = "root";
 const METADATA_FILE_NAME = ".az-gdrive-sync-metadata.json";
 const WATCH_DEBOUNCE_DELAY = 5000; // 5 seconds debounce for file changes
+const CONFIG_PATH = path.join(process.cwd(), "config.json");
 
 interface FileMetadata {
 	remoteMd5Checksum?: string;
+}
+
+interface Config {
+	ignore?: string[];
+}
+
+async function loadConfig(): Promise<Config> {
+	try {
+		const content = await fs.readFile(CONFIG_PATH, "utf8");
+		return JSON.parse(content);
+	} catch (err) {
+		logger.warn("No config.json found or error reading config. Using default settings.");
+		return {};
+	}
 }
 
 // Enum to make sync decisions clearer
@@ -114,11 +129,15 @@ async function sync(auth: OAuth2Client, remoteFiles: Map<string, DriveFile>, met
 		else logger.warn("No sync metadata file found. Starting fresh.");
 	}
 
+	// --- Load config and prepare ignore patterns ---
+	const config = await loadConfig();
+	const ignorePatterns = (config.ignore || []).map((pattern) => new RegExp(pattern));
+
 	// --- File Scanning ---
 	ui.updateProgress({ currentActivity: "Scanning local and remote files..." });
 	let [localFiles, currentRemoteFiles] = await Promise.all([
-		getLocalFilesRecursive(resolvedLocalPath),
-		listFilesRecursive(auth, REMOTE_FOLDER_ID),
+		getLocalFilesRecursive(resolvedLocalPath, ignorePatterns),
+		listFilesRecursive(auth, REMOTE_FOLDER_ID, ignorePatterns),
 	]);
 
 	// Update the shared remoteFiles map with the latest scan
@@ -259,10 +278,11 @@ function watchLocalFiles(
 	localPath: string,
 	auth: OAuth2Client,
 	remoteFiles: Map<string, DriveFile>,
-	metadata: Map<string, FileMetadata>
+	metadata: Map<string, FileMetadata>,
+	ignorePatterns: RegExp[]
 ) {
 	const watcher = chokidar.watch(localPath, {
-		ignored: /(^|[\\/])\.gdrive-sync-metadata\.json$/,
+		ignored: [/(^|[\\/])\.gdrive-sync-metadata\.json$/, ...ignorePatterns],
 		persistent: true,
 		ignoreInitial: true, // Don't trigger on initial scan
 	});
@@ -319,7 +339,10 @@ function watchLocalFiles(
 							remoteFiles.delete(relativePath); // Remove from remoteFiles map
 							ui.logEvent("SUCCESS", `[DELETE] Success: ${relativePath}`);
 						} else {
-							ui.logEvent("INFO", `[DELETE] Remote file/folder not found for ${relativePath}, skipping.`);
+							ui.logEvent(
+								"INFO",
+								`[DELETE] Remote file/folder not found for ${relativePath}, skipping.`
+							);
 						}
 						break;
 				}
@@ -360,11 +383,15 @@ function watchLocalFiles(
 	const remoteFiles: Map<string, DriveFile> = new Map();
 	const metadata: Map<string, FileMetadata> = new Map();
 
+	// --- Load config and prepare ignore patterns for watcher ---
+	const config = await loadConfig();
+	const ignorePatterns = (config.ignore || []).map((pattern) => new RegExp(pattern));
+
 	// Initial sync
 	await sync(auth, remoteFiles, metadata);
 
 	// Start watching local files after initial sync
-	watchLocalFiles(resolvedLocalPath, auth, remoteFiles, metadata);
+	watchLocalFiles(resolvedLocalPath, auth, remoteFiles, metadata, ignorePatterns);
 
 	while (true) {
 		try {

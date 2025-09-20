@@ -2,6 +2,7 @@ import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import { createReadStream, createWriteStream } from "fs";
 import * as path from "path";
+import logger from "./logger";
 
 export interface DriveFile {
 	id: string;
@@ -14,7 +15,7 @@ export interface DriveFile {
 
 export type DriveFileMap = Map<string, DriveFile>;
 
-export async function listFilesRecursive(auth: OAuth2Client, folderId: string): Promise<DriveFileMap> {
+export async function listFilesRecursive(auth: OAuth2Client, folderId: string, ignorePatterns: RegExp[] = []): Promise<DriveFileMap> {
 	const drive = google.drive({ version: "v3", auth });
 	const fileMap: DriveFileMap = new Map();
 
@@ -33,8 +34,16 @@ export async function listFilesRecursive(auth: OAuth2Client, folderId: string): 
 
 			if (res.data.files) {
 				for (const file of res.data.files) {
-					const filePath = path.join(currentPath, file.name!);
+					const filePath = path.join(currentPath, file.name!); // Use file.name! as it's guaranteed to exist here
 					const isDirectory = file.mimeType === "application/vnd.google-apps.folder";
+
+					// Check if the current entry (file or directory) should be ignored
+					if (ignorePatterns.some(pattern => pattern.test(filePath))) {
+						console.log(`Ignoring Drive file/folder: ${filePath} due to ignore pattern.`);
+						// If it's a directory and matches an ignore pattern, we should not traverse into it.
+						// If it's a file and matches, we just skip adding it.
+						continue;
+					}
 
 					fileMap.set(filePath, {
 						id: file.id!,
@@ -71,7 +80,6 @@ export async function listFilesRecursiveParallel(auth: OAuth2Client, folderIds: 
 
 	return combinedFileMap;
 }
-
 export async function downloadFile(auth: OAuth2Client, fileId: string, destinationPath: string): Promise<void> {
 	const drive = google.drive({ version: "v3", auth });
 	const dest = createWriteStream(destinationPath);
@@ -158,3 +166,4 @@ export async function deleteFile(auth: OAuth2Client, fileId: string): Promise<vo
 	const drive = google.drive({ version: "v3", auth });
 	await drive.files.delete({ fileId: fileId });
 }
+

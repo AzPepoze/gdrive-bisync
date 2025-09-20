@@ -1,3 +1,5 @@
+import logger from "./logger";
+
 // A very basic UI implementation for demonstration
 class SimpleUI {
 	start() {
@@ -18,7 +20,7 @@ class SimpleUI {
 		console.log(`${color}[${level}] ${message}\x1b[0m`); // Reset color at the end
 	}
 	updateStatus(status: string) {
-		console.log(`Status: ${status}`);
+		logger.info(`Status: ${status}`);
 	}
 	updateProgress(progress: any) {
 		// console.log(`Progress:`, progress);

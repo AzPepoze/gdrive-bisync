@@ -4,10 +4,9 @@
   "description": "A custom Google Drive sync client.",
   "main": "dist/mainSync.js",
   "scripts": {
-    "build": "tsc",
     "start": "node dist/mainSync.js",
-    "authenticate": "ts-node src/authenticate.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "esbuild src/mainSync.ts --bundle --platform=node --outfile=dist/mainSync.js --external:dotenv",
+    "dev": "esbuild src/mainSync.ts --bundle --platform=node --outfile=dist/mainSync.js --watch --external:dotenv"
   },
   "keywords": [
     "google-drive",
@@ -27,6 +26,7 @@
   "devDependencies": {
     "@types/node": "^24.5.2",
     "@types/p-limit": "^2.2.0",
+    "esbuild": "^0.25.10",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
   }

@@ -11,12 +11,8 @@ const logger = winston.createLogger({
 		new winston.transports.File({ filename: "sync-error.log", level: "error" }),
 		new winston.transports.File({ filename: "sync-warn.log", level: "warn" }), // New file for warnings
 	],
-	exceptionHandlers: [
-		new winston.transports.File({ filename: "exceptions.log" })
-	],
-	rejectionHandlers: [
-		new winston.transports.File({ filename: "rejections.log" })
-	]
+	exceptionHandlers: [new winston.transports.File({ filename: "exceptions.log" })],
+	rejectionHandlers: [new winston.transports.File({ filename: "rejections.log" })],
 });
 
 if (process.env.NODE_ENV !== "production") {
