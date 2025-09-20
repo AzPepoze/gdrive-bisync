@@ -11,6 +11,17 @@ I'm doing this project for Bisync google drive for linux.
 -    **Periodic Full Sync:** Performs a full scan and synchronization at configurable intervals to ensure consistency.
 -    **Configurable Ignore Patterns:** Exclude specific files or folders from synchronization using regular expressions.
 
+## Prerequisites
+
+Before you begin, ensure you have the following installed on your system:
+
+*   **Node.js:** `az-gdrive` is a Node.js application. You will need Node.js (at least v18.12) to run it. You can download it from the [official Node.js website](https://nodejs.org/).
+*   **pnpm:** This project uses `pnpm` for package management. After installing Node.js, you can install `pnpm` globally by running:
+    ```bash
+    npm install -g pnpm
+    ```
+*   **Git:** You will need Git to clone the repository. You can download it from the [Git website](https://git-scm.com/downloads).
+
 ## Installation
 
 To set up `az-gdrive`, follow these steps:
