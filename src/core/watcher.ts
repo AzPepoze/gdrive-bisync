@@ -51,7 +51,7 @@ export function watchLocalFiles(
 							logger.warn(`[UPLOAD] Skipping 0-byte file: ${relativePath}`);
 							break;
 						}
-						logger.info(`[UPLOAD] Starting: ${relativePath}`);
+						ui.logEvent("INFO", `Uploading: ${relativePath}`);
 						const parentPath = path.dirname(relativePath);
 						const parentFolder = remoteFiles.get(parentPath);
 						const parentFolderId = parentPath === "." ? config.REMOTE_FOLDER_ID! : parentFolder?.id;
@@ -68,16 +68,16 @@ export function watchLocalFiles(
 						metadata.set(relativePath, {
 							remoteMd5Checksum: uploadedFile.md5Checksum,
 						});
-						logger.info(`[UPLOAD] Success: ${relativePath}`);
+						ui.logEvent("SUCCESS", `Uploaded: ${relativePath}`);
 						break;
 					case "unlink":
 					case "unlinkDir":
 						if (remoteFile) {
-							logger.info(`[DELETE] Starting: ${relativePath}`);
+							ui.logEvent("INFO", `Deleting: ${relativePath}`);
 							await deleteFile(auth, remoteFile.id);
 							metadata.delete(relativePath);
 							remoteFiles.delete(relativePath);
-							logger.info(`[DELETE] Success: ${relativePath}`);
+							ui.logEvent("SUCCESS", `Deleted: ${relativePath}`);
 						} else {
 							logger.warn(`[DELETE] Remote file/folder not found for ${relativePath}, skipping.`);
 						}
@@ -93,5 +93,5 @@ export function watchLocalFiles(
 		}, config.WATCH_DEBOUNCE_DELAY!);
 	});
 
-	logger.info(`Watching for local changes in: ${localPath}`);
+	ui.logEvent("INFO", `Watching for local changes in: ${localPath}`);
 }
