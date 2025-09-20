@@ -4,6 +4,7 @@ import { createReadStream, createWriteStream } from "fs";
 import * as path from "path";
 import logger from "../services/logger";
 import { DriveFileMap } from "../types";
+import { retryOperation } from "../utils";
 
 export async function listFilesRecursive(
 	auth: OAuth2Client,
@@ -20,12 +21,16 @@ export async function listFilesRecursive(
 		const folderPromises: Promise<void>[] = []; // Array to hold promises for parallel folder traversals
 
 		do {
-			const res: any = await drive.files.list({
-				q: `'${currentFolderId}' in parents and trashed = false`,
-				fields: "nextPageToken, files(id, name, mimeType, modifiedTime, md5Checksum)",
-				pageToken: pageToken as string,
-				pageSize: 1000,
-			});
+			const res = await retryOperation(
+				async () =>
+					drive.files.list({
+						q: `'${currentFolderId}' in parents and trashed = false`,
+						fields: "nextPageToken, files(id, name, mimeType, modifiedTime, md5Checksum)",
+						pageToken: pageToken as string,
+						pageSize: 1000,
+					}),
+				`List files in folder ${currentFolderId} : ${currentPath}`
+			);
 
 			if (res.data.files) {
 				for (const file of res.data.files) {
