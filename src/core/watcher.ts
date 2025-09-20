@@ -33,6 +33,8 @@ export function watchLocalFiles(
 
 		ui.stopIdleCountdown();
 
+		ui.updateStatus(`Processing change: ${event} ${relativePath}`);
+
 		if (syncTimeout[relativePath]) {
 			clearTimeout(syncTimeout[relativePath]);
 		}
@@ -42,7 +44,6 @@ export function watchLocalFiles(
 			const remoteFile = remoteFiles.get(relativePath);
 
 			try {
-				ui.updateStatus(`Processing change: ${event} ${relativePath}`);
 				switch (event) {
 					case "add":
 					case "change":
@@ -83,13 +84,16 @@ export function watchLocalFiles(
 						}
 						break;
 				}
-				ui.startIdleCountdown(config.PERIODIC_SYNC_INTERVAL_MS!);
 			} catch (error: any) {
 				const errorMessage = `[FAILED] Local change action for ${relativePath}. Error: ${error.message}`;
 				logger.error(errorMessage);
 				ui.updateStatus("Error processing change. Check logs.");
 			}
 			delete syncTimeout[relativePath];
+
+			if (Object.keys(syncTimeout).length === 0) {
+				ui.startIdleCountdown(config.PERIODIC_SYNC_INTERVAL_MS!);
+			}
 		}, config.WATCH_DEBOUNCE_DELAY!);
 	});
 

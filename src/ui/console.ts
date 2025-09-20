@@ -105,7 +105,6 @@ class InteractiveUI {
 			this.countdownInterval = null;
 			logger.debug("UI: Cleared countdown interval.");
 		}
-		ui.stop();
 	}
 }
 
