@@ -35,7 +35,16 @@ Before running the sync, you need to authenticate with your Google account.
      - Go to "**Credentials**" -> "**Create Credentials**" -> "**OAuth client ID**".
      - Select "**Desktop app**" as the application type.
      - Download the JSON file provided after creation.
-     - **IMPORTANT:** Rename the downloaded file to `credentials.json` and place it in the **root directory** of this project.
+     - **IMPORTANT:** First, create a `config` directory in the project root. Then, rename the downloaded file to `credentials.json` and place it inside the newly created `config` directory.
+
+     After placing your `credentials.json`, your `config` folder should look like this:
+
+     ```
+     az-gdrive/
+     ├── config/
+     │   └── credentials.json
+     └── ... (other project files)
+     ```
 
 2. **Configure Redirect URI:**
 
@@ -52,9 +61,22 @@ Before running the sync, you need to authenticate with your Google account.
 
      Your browser should open automatically. Follow the prompts to log in and grant permissions. The application will automatically capture the authorization code.
 
+### Config Folder Structure
+
+Then, after running `pnpm authenticate` and creating `config.json` (if applicable), it will contain:
+
+```
+az-gdrive/
+├── config/
+│   ├── credentials.json
+│   ├── config.json
+│   └── token.json
+└── ... (other project files)
+```
+
 ## Configuration
 
-You can configure `az-gdrive` by creating a `config.json` file in the project root directory.
+You can configure `az-gdrive` by creating a `config.json` file in the `config` directory.
 
 Here's an example `config.json` with default values:
 
@@ -65,7 +87,6 @@ Here's an example `config.json` with default values:
 	"METADATA_FILE_NAME": ".az-gdrive-sync-metadata.json",
 	"WATCH_DEBOUNCE_DELAY": 5000,
 	"PERIODIC_SYNC_INTERVAL_MS": 60000,
-	"LOG_DIR": "logs",
 	"ignore": ["(^|.*[\\/])node_modules([\\/].*|$)"]
 }
 ```
@@ -75,7 +96,6 @@ Here's an example `config.json` with default values:
 -    `METADATA_FILE_NAME`: Name of the metadata file used for sync tracking.
 -    `WATCH_DEBOUNCE_DELAY`: Delay (in ms) before processing local file changes.
 -    `PERIODIC_SYNC_INTERVAL_MS`: Interval (in ms) for full periodic syncs.
--    `LOG_DIR`: Directory where log files will be stored.
 -    `ignore`: An array of regular expression strings for files/folders to ignore during sync.
 
 ## Usage

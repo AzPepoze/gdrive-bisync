@@ -7,6 +7,5 @@
 # Logs
 logs
 
-# Credentials
-token.json
-credentials.json
+# Config files
+config/
