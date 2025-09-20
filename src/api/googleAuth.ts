@@ -3,7 +3,7 @@ import { promises as fs } from "fs";
 import { OAuth2Client } from "google-auth-library";
 import logger from "../services/logger";
 
-const TOKEN_PATH = "token.json";
+const TOKEN_PATH = "config/token.json";
 
 /**
  * Reads previously authorized credentials from the save file.
@@ -21,7 +21,7 @@ export async function authorize(): Promise<OAuth2Client> {
 		return client;
 	} catch (err) {
 		logger.error(`Authentication failed: Could not load token from '${TOKEN_PATH}'.`);
-		logger.error("Please run \"pnpm authenticate\" to set up your credentials.");
+		logger.error('Please run "pnpm authenticate" to set up your credentials.');
 		throw new Error("Authentication not configured.");
 	}
 }
