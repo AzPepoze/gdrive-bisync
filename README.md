@@ -1,6 +1,8 @@
-# az-gdrive: Google Drive Sync Client
+# az-gdrive: Google Drive Bisync
 
 `az-gdrive` is a command-line utility designed to synchronize a local directory with a Google Drive folder. It provides robust features for keeping your local files and Google Drive in sync, including periodic scans, real-time local change detection, and a user-friendly console interface.
+
+I'm doing this project for Bisync google drive for linux.
 
 ## Features
 
