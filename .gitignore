@@ -1,0 +1,14 @@
+# Dependencies
+/node_modules
+
+# Build output
+/dist
+
+# Logs
+*.log
+sync.log
+error.log
+
+# Credentials
+token.json
+credentials.json

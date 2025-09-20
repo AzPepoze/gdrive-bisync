@@ -1,0 +1,33 @@
+{
+  "name": "az-gdrive",
+  "version": "1.0.0",
+  "description": "A custom Google Drive sync client.",
+  "main": "dist/mainSync.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/mainSync.js",
+    "authenticate": "ts-node src/authenticate.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "google-drive",
+    "sync",
+    "typescript"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "gaxios": "^7.1.1",
+    "google-auth-library": "^10.3.0",
+    "googleapis": "^160.0.0",
+    "p-limit": "^7.1.1",
+    "winston": "^3.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@types/p-limit": "^2.2.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}
