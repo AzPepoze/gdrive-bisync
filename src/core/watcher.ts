@@ -20,7 +20,7 @@ export function watchLocalFiles(
 ) {
 	const watcher = chokidar.watch(localPath, {
 		ignored: [
-			/(^|[\\/])\.az-gdrive-sync-metadata\.json$/,
+			/(^|[\\/])\.gdrive-bisync-sync-metadata\.json$/,
 			...(config.ignore || []).map((pattern) => new RegExp(pattern)),
 		],
 		persistent: true,

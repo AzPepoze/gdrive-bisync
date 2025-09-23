@@ -1,5 +1,5 @@
 {
-  "name": "az-gdrive",
+  "name": "gdrive-bisync",
   "version": "1.0.0",
   "description": "A custom Google Drive sync client.",
   "main": "dist/core/main.js",

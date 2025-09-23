@@ -1,6 +1,6 @@
-# az-gdrive: Google Drive Bisync
+# gdrive-bisync: Google Drive Bisync
 
-`az-gdrive` is a command-line utility designed to synchronize a local directory with a Google Drive folder. It provides robust features for keeping your local files and Google Drive in sync, including periodic scans, real-time local change detection, and a user-friendly console interface.
+`gdrive-bisync` is a command-line utility designed to synchronize a local directory with a Google Drive folder. It provides robust features for keeping your local files and Google Drive in sync, including periodic scans, real-time local change detection, and a user-friendly console interface.
 
 I'm doing this project for Bisync google drive for linux.
 
@@ -15,21 +15,21 @@ I'm doing this project for Bisync google drive for linux.
 
 Before you begin, ensure you have the following installed on your system:
 
-*   **Node.js:** `az-gdrive` is a Node.js application. You will need Node.js (at least v18.12) to run it. You can download it from the [official Node.js website](https://nodejs.org/).
-*   **pnpm:** This project uses `pnpm` for package management. After installing Node.js, you can install `pnpm` globally by running:
-    ```bash
-    npm install -g pnpm
-    ```
-*   **Git:** You will need Git to clone the repository. You can download it from the [Git website](https://git-scm.com/downloads).
+-    **Node.js:** `gdrive-bisync` is a Node.js application. You will need Node.js (at least v18.12) to run it. You can download it from the [official Node.js website](https://nodejs.org/).
+-    **pnpm:** This project uses `pnpm` for package management. After installing Node.js, you can install `pnpm` globally by running:
+     ```bash
+     npm install -g pnpm
+     ```
+-    **Git:** You will need Git to clone the repository. You can download it from the [Git website](https://git-scm.com/downloads).
 
 ## Installation
 
-To set up `az-gdrive`, follow these steps:
+To set up `gdrive-bisync`, follow these steps:
 
 1. **Clone the repository:**
      ```bash
-     git clone https://github.com/AzPepoze/az-gdrive
-     cd az-gdrive
+     git clone https://github.com/AzPepoze/gdrive-bisync
+     cd gdrive-bisync
      ```
 2. **Install dependencies:**
      ```bash
@@ -53,7 +53,7 @@ Before running the sync, you need to authenticate with your Google account.
      After placing your `credentials.json`, your `config` folder should look like this:
 
      ```
-     az-gdrive/
+     gdrive-bisync/
      ├── config/
      │   └── credentials.json
      └── ... (other project files)
@@ -79,7 +79,7 @@ Before running the sync, you need to authenticate with your Google account.
 Then, after running `pnpm authenticate` and creating `config.json` (if applicable), it will contain:
 
 ```
-az-gdrive/
+gdrive-bisync/
 ├── config/
 │   ├── credentials.json
 │   ├── config.json
@@ -89,7 +89,7 @@ az-gdrive/
 
 ## Configuration
 
-You can configure `az-gdrive` by creating a `config.json` file in the `config` directory.
+You can configure `gdrive-bisync` by creating a `config.json` file in the `config` directory.
 
 Here's an example `config.json` with default values:
 
@@ -97,7 +97,7 @@ Here's an example `config.json` with default values:
 {
 	"LOCAL_SYNC_PATH": "~/GoogleDrive",
 	"REMOTE_FOLDER_ID": "root",
-	"METADATA_FILE_NAME": ".az-gdrive-sync-metadata.json",
+	"METADATA_FILE_NAME": ".gdrive-bisync-sync-metadata.json",
 	"WATCH_DEBOUNCE_DELAY": 5000,
 	"PERIODIC_SYNC_INTERVAL_MS": 60000,
 	"ignore": ["(^|.*[\\/])node_modules([\\/].*|$)"]
