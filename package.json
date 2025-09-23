@@ -1,37 +1,37 @@
 {
-  "name": "gdrive-bisync",
-  "version": "1.0.0",
-  "description": "A custom Google Drive sync client.",
-  "main": "dist/core/main.js",
-  "scripts": {
-    "start": "node dist/core/main.js",
-    "authenticate": "node dist/setupAuth.js",
-    "build": "esbuild src/core/main.ts src/setupAuth.ts --bundle --platform=node --outdir=dist --external:dotenv",
-    "dev": "esbuild src/core/main.ts src/setupAuth.ts --bundle --platform=node --outdir=dist --watch --external:dotenv"
-  },
-  "keywords": [
-    "google-drive",
-    "sync",
-    "typescript"
-  ],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "chokidar": "^4.0.3",
-    "gaxios": "^7.1.1",
-    "google-auth-library": "^10.3.0",
-    "googleapis": "^160.0.0",
-    "open": "^10.2.0",
-    "ora": "5.4.1",
-    "p-limit": "^7.1.1",
-    "winston": "^3.17.0",
-    "winston-daily-rotate-file": "^5.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^24.5.2",
-    "@types/p-limit": "^2.2.0",
-    "esbuild": "^0.25.10",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.2"
-  }
+	"name": "gdrive-bisync",
+	"version": "1.0.0",
+	"description": "A custom Google Drive sync client.",
+	"main": "dist/core/main.js",
+	"scripts": {
+		"start": "node --max-old-space-size=512 dist/core/main.js",
+		"authenticate": "node dist/setupAuth.js",
+		"build": "esbuild src/core/main.ts src/setupAuth.ts --bundle --platform=node --outdir=dist --external:dotenv",
+		"dev": "esbuild src/core/main.ts src/setupAuth.ts --bundle --platform=node --outdir=dist --watch --external:dotenv"
+	},
+	"keywords": [
+		"google-drive",
+		"sync",
+		"typescript"
+	],
+	"author": "",
+	"license": "ISC",
+	"dependencies": {
+		"chokidar": "^4.0.3",
+		"gaxios": "^7.1.1",
+		"google-auth-library": "^10.3.0",
+		"googleapis": "^160.0.0",
+		"open": "^10.2.0",
+		"ora": "5.4.1",
+		"p-limit": "^7.1.1",
+		"winston": "^3.17.0",
+		"winston-daily-rotate-file": "^5.0.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.5.2",
+		"@types/p-limit": "^2.2.0",
+		"esbuild": "^0.25.10",
+		"ts-node": "^10.9.2",
+		"typescript": "^5.9.2"
+	}
 }

@@ -124,3 +124,38 @@ This script will perform the following actions:
 1. Pull the latest changes from your Git repository (`git pull`).
 2. Rebuild the project (`pnpm build`).
 3. Start the application (`pnpm start`).
+
+## Running as a Service (Linux with systemd)
+
+For continuous background synchronization, you can set up `gdrive-bisync` as a `systemd` service. This will ensure the application automatically starts on boot and restarts if it fails.
+
+A convenience script, `setup_service.sh`, is provided to automate this process.
+
+### How to Use
+
+1. **Run the setup script:**
+    ```bash
+    sudo ./setup_service.sh
+    ```
+    The script will:
+    - Create a `gdrive-bisync.service` file.
+    - Move it to the systemd directory (`/etc/systemd/system/`).
+    - Reload the systemd daemon.
+    - Enable and start the service.
+
+### Managing the Service
+
+- **Check the status:**
+    ```bash
+    sudo systemctl status gdrive-bisync
+    ```
+
+- **View logs:**
+    ```bash
+    journalctl -u gdrive-bisync -f
+    ```
+
+- **Stop the service:**
+    ```bash
+    sudo systemctl stop gdrive-bisync
+    ```

@@ -18,7 +18,7 @@ export const LOG_DIR = "logs";
 const DefaultConfig: Config = {
 	LOCAL_SYNC_PATH: "~/GoogleDrive",
 	REMOTE_FOLDER_ID: "root",
-	METADATA_FILE_NAME: ".gdrive-bisync-sync-metadata.json",
+	METADATA_FILE_NAME: ".gdrive-bisync-metadata.json",
 	WATCH_DEBOUNCE_DELAY: 5000,
 	PERIODIC_SYNC_INTERVAL_MS: 1 * 60 * 1000, // 1 minute default
 };
