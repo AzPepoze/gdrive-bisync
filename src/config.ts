@@ -16,7 +16,7 @@ export interface Config {
 export const LOG_DIR = "logs";
 
 const DefaultConfig: Config = {
-	LOCAL_SYNC_PATH: "~/GoogleDrive2",
+	LOCAL_SYNC_PATH: "~/GoogleDrive",
 	REMOTE_FOLDER_ID: "root",
 	METADATA_FILE_NAME: ".gdrive-bisync-sync-metadata.json",
 	WATCH_DEBOUNCE_DELAY: 5000,
