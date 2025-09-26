@@ -19,10 +19,7 @@ export function watchLocalFiles(
 	config: Config
 ) {
 	const watcher = chokidar.watch(localPath, {
-		ignored: [
-			/(^|[\\/])\.gdrive-bisync-sync-metadata\.json$/,
-			...(config.ignore || []).map((pattern) => new RegExp(pattern)),
-		],
+		ignored: (config.ignore || []).map((pattern) => new RegExp(pattern)),
 		persistent: true,
 		ignoreInitial: true, // Don't trigger on initial scan
 	});
@@ -72,7 +69,6 @@ export function watchLocalFiles(
 						ui.logEvent("SUCCESS", `Uploaded: ${relativePath}`);
 						break;
 					case "unlink":
-					case "unlinkDir":
 						if (remoteFile) {
 							ui.logEvent("INFO", `Deleting: ${relativePath}`);
 							await deleteFile(auth, remoteFile.id);
@@ -80,7 +76,25 @@ export function watchLocalFiles(
 							remoteFiles.delete(relativePath);
 							ui.logEvent("SUCCESS", `Deleted: ${relativePath}`);
 						} else {
-							logger.warn(`[DELETE] Remote file/folder not found for ${relativePath}, skipping.`);
+							logger.warn(`[DELETE] Remote file not found for ${relativePath}, skipping.`);
+						}
+						break;
+					case "unlinkDir":
+						if (remoteFile) {
+							ui.logEvent("INFO", `Deleting folder: ${relativePath}`);
+							await deleteFile(auth, remoteFile.id);
+							metadata.delete(relativePath);
+							remoteFiles.delete(relativePath);
+							// Also remove all children from remoteFiles and metadata
+							for (const key of remoteFiles.keys()) {
+								if (key.startsWith(relativePath + path.sep)) {
+									remoteFiles.delete(key);
+									metadata.delete(key);
+								}
+							}
+							ui.logEvent("SUCCESS", `Deleted folder: ${relativePath}`);
+						} else {
+							logger.warn(`[DELETE] Remote folder not found for ${relativePath}, skipping.`);
 						}
 						break;
 				}

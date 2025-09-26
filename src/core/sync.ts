@@ -125,9 +125,13 @@ export async function sync(
 				switch (task.action) {
 					case SyncAction.DOWNLOAD_NEW:
 					case SyncAction.DOWNLOAD_UPDATE:
-						await fs.mkdir(path.dirname(localFilePath), { recursive: true });
-						await downloadFile(auth, remoteFile!.id, localFilePath);
-						metadata.set(task.filePath, { remoteMd5Checksum: remoteFile!.md5Checksum });
+						if (remoteFile?.id) {
+							await fs.mkdir(path.dirname(localFilePath), { recursive: true });
+							await downloadFile(auth, remoteFile.id, localFilePath);
+							metadata.set(task.filePath, { remoteMd5Checksum: remoteFile.md5Checksum });
+						} else {
+							logger.warn(`Skipping download for ${task.filePath} because remote file ID is missing.`);
+						}
 						break;
 
 					case SyncAction.UPLOAD_NEW:
