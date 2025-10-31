@@ -43,6 +43,21 @@ export async function listFilesRecursive(
 						continue;
 					}
 
+					const existingFile = fileMap.get(filePath);
+					if (existingFile && !isDirectory) {
+						const existingModifiedTime = new Date(existingFile.modifiedTime).getTime();
+						const currentModifiedTime = new Date(file.modifiedTime!).getTime();
+						if (currentModifiedTime <= existingModifiedTime) {
+							logger.warn(
+								`Found duplicate remote file: "${filePath}". Keeping the one with modified time ${existingFile.modifiedTime}.`
+							);
+							continue; // Keep the existing, newer or same-age file
+						}
+						logger.warn(
+							`Found duplicate remote file: "${filePath}". Updating to the one with modified time ${file.modifiedTime!}.`
+						);
+					}
+
 					fileMap.set(filePath, {
 						id: file.id!,
 						name: file.name!,
@@ -53,6 +68,9 @@ export async function listFilesRecursive(
 					});
 
 					if (isDirectory) {
+						if (existingFile && existingFile.isDirectory) {
+							logger.warn(`Found duplicate remote folder: "${filePath}". Both will be scanned.`);
+						}
 						folderPromises.push(traverse(file.id!, filePath)); // Add to promises array
 					}
 				}
