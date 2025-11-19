@@ -100,7 +100,7 @@ export async function downloadFile(auth: OAuth2Client, fileId: string, destinati
 	const drive = google.drive({ version: "v3", auth });
 	const dest = createWriteStream(destinationPath);
 
-	const res = await drive.files.get({ fileId: fileId, alt: "media" }, { responseType: "stream" });
+	const res = await drive.files.get({ fileId: fileId, alt: "media", acknowledgeAbuse: true }, { responseType: "stream" });
 
 	return new Promise((resolve, reject) => {
 		(res.data as any)
