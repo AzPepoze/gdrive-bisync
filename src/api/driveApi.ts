@@ -177,7 +177,17 @@ export async function createFolder(
 	return { id: res.data.id! };
 }
 
-export async function deleteFile(auth: OAuth2Client, fileId: string): Promise<void> {
+export async function deleteFilePermanently(auth: OAuth2Client, fileId: string): Promise<void> {
 	const drive = google.drive({ version: "v3", auth });
 	await drive.files.delete({ fileId: fileId });
+}
+
+export async function trashRemoteFile(auth: OAuth2Client, fileId: string): Promise<void> {
+	const drive = google.drive({ version: "v3", auth });
+	await drive.files.update({
+		fileId: fileId,
+		requestBody: {
+			trashed: true,
+		},
+	});
 }

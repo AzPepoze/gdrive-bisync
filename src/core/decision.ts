@@ -11,9 +11,27 @@ export function determineSyncAction(
 ): SyncAction {
 	const lastSyncedInfo = metadata.get(filePath);
 
+	// --- Deletion Logic ---
+	if (lastSyncedInfo) {
+		if (localFile && !remoteFile) {
+			// File exists locally and was synced before, but now missing remotely
+			return SyncAction.DELETE_LOCAL;
+		}
+		if (!localFile && remoteFile) {
+			// File exists remotely and was synced before, but now missing locally
+			return SyncAction.DELETE_REMOTE;
+		}
+	}
+
+
 	if (localFile && !remoteFile) {
 		return SyncAction.UPLOAD_NEW;
 	}
+
+	if (!localFile && remoteFile) {
+		return SyncAction.DOWNLOAD_NEW;
+	}
+
 
 	if (!localFile && remoteFile) {
 		return SyncAction.DOWNLOAD_NEW;

@@ -3,13 +3,14 @@ import * as chokidar from "chokidar";
 import { promises as fs } from "fs";
 import { OAuth2Client } from "google-auth-library";
 
-import { deleteFile, uploadOrUpdateFile } from "../api/driveApi";
+import { trashRemoteFile, uploadOrUpdateFile } from "../api/driveApi";
 import { DriveFile, FileMetadata } from "../types";
 import { Config } from "../config";
 import { ui } from "../ui/console";
 import logger from "../services/logger";
 
 let syncTimeout: { [key: string]: NodeJS.Timeout } = {};
+const recentlyDeletedDirs = new Set<string>();
 
 export function watchLocalFiles(
 	localPath: string,
@@ -31,6 +32,17 @@ export function watchLocalFiles(
 		ui.stopIdleCountdown();
 
 		ui.updateStatus(`Processing change: ${event} ${relativePath}`);
+
+		// If a file is unlinked, check if its parent was just deleted.
+		if (event === "unlink") {
+			const parentDir = path.dirname(relativePath);
+			if (recentlyDeletedDirs.has(parentDir)) {
+				logger.debug(
+					`Ignoring unlink event for ${relativePath} as parent directory ${parentDir} was just deleted.`
+				);
+				return;
+			}
+		}
 
 		if (syncTimeout[relativePath]) {
 			clearTimeout(syncTimeout[relativePath]);
@@ -71,7 +83,7 @@ export function watchLocalFiles(
 					case "unlink":
 						if (remoteFile) {
 							ui.logEvent("INFO", `Deleting: ${relativePath}`);
-							await deleteFile(auth, remoteFile.id);
+							await trashRemoteFile(auth, remoteFile.id);
 							metadata.delete(relativePath);
 							remoteFiles.delete(relativePath);
 							ui.logEvent("SUCCESS", `Deleted: ${relativePath}`);
@@ -80,9 +92,14 @@ export function watchLocalFiles(
 						}
 						break;
 					case "unlinkDir":
+						// When a directory is deleted, mark it and its subdirectories as recently deleted.
+						recentlyDeletedDirs.add(relativePath);
+						// Failsafe to clear the entry after a while
+						setTimeout(() => recentlyDeletedDirs.delete(relativePath), 10000);
+
 						if (remoteFile) {
 							ui.logEvent("INFO", `Deleting folder: ${relativePath}`);
-							await deleteFile(auth, remoteFile.id);
+							await trashRemoteFile(auth, remoteFile.id);
 							metadata.delete(relativePath);
 							remoteFiles.delete(relativePath);
 							// Also remove all children from remoteFiles and metadata

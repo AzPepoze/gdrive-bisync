@@ -4,7 +4,14 @@ import { OAuth2Client } from "google-auth-library";
 
 import logger from "../services/logger";
 import { getLocalFilesRecursive } from "../services/localScanner";
-import { createFolder, downloadFile, listFilesRecursive, uploadOrUpdateFile } from "../api/driveApi";
+import {
+	createFolder,
+	deleteFilePermanently,
+	downloadFile,
+	listFilesRecursive,
+	trashRemoteFile,
+	uploadOrUpdateFile,
+} from "../api/driveApi";
 import { ui } from "../ui/console";
 import { resolvePath } from "../utils";
 import { determineSyncAction } from "./decision";
@@ -130,7 +137,9 @@ export async function sync(
 							await downloadFile(auth, remoteFile.id, localFilePath);
 							metadata.set(task.filePath, { remoteMd5Checksum: remoteFile.md5Checksum });
 						} else {
-							logger.warn(`Skipping download for ${task.filePath} because remote file ID is missing.`);
+							logger.warn(
+								`Skipping download for ${task.filePath} because remote file ID is missing.`
+							);
 						}
 						break;
 
@@ -152,6 +161,31 @@ export async function sync(
 						});
 						metadata.set(task.filePath, { remoteMd5Checksum: uploadedFile.md5Checksum });
 						break;
+
+					case SyncAction.DELETE_LOCAL:
+						try {
+							await fs.unlink(localFilePath);
+							logger.info(`Deleted local file: ${task.filePath}`);
+						} catch (error: any) {
+							// If file doesn't exist, it's not an error in this context
+							if (error.code !== "ENOENT") {
+								throw error;
+							}
+						}
+						metadata.delete(task.filePath);
+						break;
+
+					case SyncAction.DELETE_REMOTE:
+						if (remoteFile?.id) {
+							await trashRemoteFile(auth, remoteFile.id);
+							logger.info(`Trashed remote file: ${task.filePath}`);
+							metadata.delete(task.filePath);
+						} else {
+							logger.warn(
+								`Skipping remote deletion for ${task.filePath} because remote file ID is missing.`
+							);
+						}
+						break;
 				}
 			}, `Sync task for ${task.filePath}`);
 			completedTasks++;
@@ -171,3 +205,4 @@ export async function sync(
 	logger.info("Sync cycle finished.");
 	ui.startIdleCountdown(config.PERIODIC_SYNC_INTERVAL_MS!);
 }
+

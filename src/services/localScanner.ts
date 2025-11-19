@@ -2,7 +2,7 @@ import { promises as fs } from "fs";
 import * as path from "path";
 import { createHash } from "crypto";
 import { createReadStream } from "fs";
-import { LocalFile, LocalFileMap } from "../types";
+import { LocalFileMap } from "../types";
 import logger from "./logger";
 
 async function getFileMd5(filePath: string): Promise<string> {
@@ -55,6 +55,10 @@ export async function getLocalFilesRecursive(
 		}
 	}
 
-	await traverse(rootPath, "");
-	return fileMap;
-}
+		await traverse(rootPath, "");
+
+		return fileMap;
+
+	}
+
+	
