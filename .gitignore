@@ -2,7 +2,8 @@
 gdrive-bisync
 
 # Build output
-/dist
+dist
+release
 
 # Logs
 logs/

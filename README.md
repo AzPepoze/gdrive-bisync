@@ -1,6 +1,20 @@
-# gdrive-bisync (Go Version)
+# gdrive-bisync
 
-`gdrive-bisync` is a high-performance command-line utility for synchronizing a local directory with a Google Drive folder. Rewritten in Go, it offers robust features, low resource usage, and single-binary deployment.
+`gdrive-bisync` is a command-line utility for bidirectional synchronization between a local directory and a Google Drive folder. It offers robust features, low resource usage, and single-binary deployment.
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+  - [From Releases](#from-releases)
+  - [Building from Source](#building-from-source)
+- [Development](#development)
+- [Setup & Configuration](#setup--configuration)
+  - [1. Google Credentials](#1-google-credentials)
+  - [2. Application Config](#2-application-config)
+  - [3. First Run (Authentication)](#3-first-run-authentication)
+- [Usage](#usage)
+  - [Linux Service (systemd)](#linux-service-systemd)
 
 ## Features
 
