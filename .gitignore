@@ -1,12 +1,12 @@
 # Binaries
-gdrive-bisync
+/gdrive-bisync
 
 # Build output
-dist
-release
+/dist
+/release
 
 # Logs
-logs/
+/logs
 
 # Config files
 /config/token.json
