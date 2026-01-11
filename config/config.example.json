@@ -1,0 +1,11 @@
+{
+	"LOCAL_SYNC_PATH": "~/GoogleDrive",
+	"REMOTE_FOLDER_ID": "root",
+	"METADATA_FILE_NAME": ".gdrive-bisync-metadata.json",
+	"STATE_FILE_NAME": ".gdrive-bisync-state.json",
+	"WATCH_DEBOUNCE_DELAY": 5000,
+	"PERIODIC_SYNC_INTERVAL_MS": 60000,
+	"MAX_CONCURRENT_SCANS": 20,
+	"MAX_RETRIES": 10,
+	"ignore": ["(^|.*[\\\\/])node_modules([\\\\/].*|$)"]
+}

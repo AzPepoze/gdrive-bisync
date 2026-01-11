@@ -1,11 +1,21 @@
-# Dependencies
-/node_modules
+# Binaries
+gdrive-bisync
 
 # Build output
-/dist
+dist
+release
 
 # Logs
-logs
+logs/
 
 # Config files
-config/
+/config/token.json
+/config/credentials.json
+/config/config.json
+/config/.gdrive-bisync-state.json
+
+# Allow example config
+!/config/config.example.json
+
+# OS specific
+.DS_Store
