@@ -40,7 +40,7 @@ func GetConfigDir() string {
 	home, err := os.UserHomeDir()
 	if err == nil {
 		userPath := filepath.Join(home, ".config", "gdrive-bisync", "config")
-		if _, err := os.Stat(filepath.Join(userPath, "config.json")); err == nil {
+		if info, err := os.Stat(userPath); err == nil && info.IsDir() {
 			return userPath
 		}
 	}
