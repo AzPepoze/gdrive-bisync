@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
+	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
 
 	"golang.org/x/oauth2"
@@ -17,10 +19,13 @@ import (
 	"google.golang.org/api/drive/v3"
 )
 
-const (
-	TokenPath       = "config/token.json"
-	CredentialsPath = "config/credentials.json"
-)
+func getTokenPath() string {
+	return filepath.Join(config.GetConfigDir(), "token.json")
+}
+
+func getCredentialsPath() string {
+	return filepath.Join(config.GetConfigDir(), "credentials.json")
+}
 
 type AuthorizedUser struct {
 	Type         string `json:"type"`
@@ -31,9 +36,10 @@ type AuthorizedUser struct {
 
 // Authorize returns an authorized Drive client.
 func Authorize(ctx context.Context) (*http.Client, error) {
-	b, err := os.ReadFile(TokenPath)
+	tokenPath := getTokenPath()
+	b, err := os.ReadFile(tokenPath)
 	if err != nil {
-		logger.Error("Authentication failed: Could not load token.", "path", TokenPath, "error", err)
+		logger.Error("Authentication failed: Could not load token.", "path", tokenPath, "error", err)
 		return nil, fmt.Errorf("authentication not configured: %w", err)
 	}
 
@@ -49,9 +55,10 @@ func Authorize(ctx context.Context) (*http.Client, error) {
 func SetupAuthentication(ctx context.Context) error {
 	logger.Info("--- Google Drive Authentication Setup ---")
 
-	b, err := os.ReadFile(CredentialsPath)
+	credentialsPath := getCredentialsPath()
+	b, err := os.ReadFile(credentialsPath)
 	if err != nil {
-		logger.Error(fmt.Sprintf("Error: '%s' not found.", CredentialsPath))
+		logger.Error(fmt.Sprintf("Error: '%s' not found.", credentialsPath))
 		fmt.Printf(`
 1. Go to the Google Cloud Console: https://console.cloud.google.com/
 2. Create a new project or select an existing one.
@@ -59,7 +66,10 @@ func SetupAuthentication(ctx context.Context) error {
 4. Go to "Credentials" -> "Create Credentials" -> "OAuth client ID".
 5. Select "Desktop app" as the application type.
 6. Download the JSON file provided after creation.
-7. IMPORTANT: Rename the downloaded file to "credentials.json" and place it in the "config" directory of this project.
+7. IMPORTANT: Rename the downloaded file to "credentials.json" and place it in:
+   - Linux: ~/.config/gdrive-bisync/config/
+   - Windows: %%USERPROFILE%%\.config\gdrive-bisync\config\
+   - Or in the "config" directory where you run the application.
 `)
 		return err
 	}
@@ -127,11 +137,6 @@ func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
 	authCode := <-codeChan
 
 	tok, err := config.Exchange(ctx, authCode)
-	if err != nil {
-		logger.Error("Unable to retrieve token from web", "error", err)
-		return nil
-	}
-
 	payload := AuthorizedUser{
 		Type:         "authorized_user",
 		ClientID:     config.ClientID,
@@ -139,7 +144,8 @@ func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
 		RefreshToken: tok.RefreshToken,
 	}
 
-	f, err := os.Create(TokenPath)
+	tokenPath := getTokenPath()
+	f, err := os.Create(tokenPath)
 	if err != nil {
 		logger.Error("Unable to cache oauth token", "error", err)
 		return nil

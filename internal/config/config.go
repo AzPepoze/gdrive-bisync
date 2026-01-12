@@ -21,7 +21,6 @@ var (
 		MaxRetries:             10,
 		Ignore:                 []string{`(^|.*[\\/])node_modules([\\/].*|$)`},
 	}
-	ConfigPath = filepath.Join("config", "config.json")
 )
 
 type Config struct {
