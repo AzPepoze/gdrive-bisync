@@ -17,7 +17,6 @@ linux:
 	@mkdir -p $(DIST_DIR)/linux/config
 	GOOS=linux GOARCH=amd64 go build -o $(DIST_DIR)/linux/$(APP_NAME) cmd/gdrive-bisync/main.go
 	@cp $(CONFIG_EXAMPLE) $(DIST_DIR)/linux/config/
-	@cp setup_service.sh $(DIST_DIR)/linux/
 	@echo "Linux build ready in $(DIST_DIR)/linux"
 
 windows:
