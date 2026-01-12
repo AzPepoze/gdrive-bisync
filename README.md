@@ -76,10 +76,12 @@ paru -S gdrive-bisync
 
 ### Command-Line Options
 
-| Flag      | Description                                                                                                                                                                                                     |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--setup` | Run first-time Google OAuth authentication. Opens a browser window to authorize the application. Must be run before first sync.                                                                                 |
-| `--force` | Force a complete rescan by deleting state and metadata files. Use this if sync state becomes corrupted or you want to start fresh. **Warning**: This will trigger a full rescan of both local and remote files. |
+| Flag                  | Description                                                                                                                                                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--setup`             | Run first-time Google OAuth authentication. Opens a browser window to authorize the application. Must be run before first sync.                                                                                 |
+| `--force`             | Force a complete rescan by deleting state and metadata files. Use this if sync state becomes corrupted or you want to start fresh. **Warning**: This will trigger a full rescan of both local and remote files. |
+| `--install-service`   | Install systemd user service for automatic startup (Linux only). The service will use the current executable path.                                                                                              |
+| `--uninstall-service` | Uninstall systemd user service (Linux only). Stops and removes the service.                                                                                                                                     |
 
 ### Examples
 
@@ -92,6 +94,36 @@ paru -S gdrive-bisync
 
 # Reset and rescan everything
 ./gdrive-bisync --force
+
+# Install as systemd service (Linux only)
+./gdrive-bisync --install-service
+
+# Uninstall systemd service (Linux only)
+./gdrive-bisync --uninstall-service
+```
+
+### Linux Service Management
+
+After installing the service with `--install-service`, you can manage it using systemctl:
+
+```bash
+# Enable and start the service
+systemctl --user enable --now gdrive-bisync
+
+# Check service status
+systemctl --user status gdrive-bisync
+
+# View real-time logs
+journalctl --user -u gdrive-bisync -f
+
+# Stop the service
+systemctl --user stop gdrive-bisync
+
+# Disable the service
+systemctl --user disable gdrive-bisync
+
+# Restart the service
+systemctl --user restart gdrive-bisync
 ```
 
 # Setup & Configuration

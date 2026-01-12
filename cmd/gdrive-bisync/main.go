@@ -13,6 +13,7 @@ import (
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/core"
 	"gdrive-bisync/internal/services/logger"
+	"gdrive-bisync/internal/services/systemd"
 	"gdrive-bisync/internal/types"
 	"gdrive-bisync/internal/utils"
 )
@@ -20,10 +21,30 @@ import (
 func main() {
 	setupFlag := flag.Bool("setup", false, "Run authentication setup")
 	forceFlag := flag.Bool("force", false, "Force a fresh sync by deleting metadata and state files")
+	installServiceFlag := flag.Bool("install-service", false, "Install systemd user service (Linux only)")
+	uninstallServiceFlag := flag.Bool("uninstall-service", false, "Uninstall systemd user service (Linux only)")
 	flag.Parse()
 
 	logger.Init()
 	defer logger.Close()
+
+	// Handle service installation
+	if *installServiceFlag {
+		if err := systemd.InstallService(); err != nil {
+			logger.Error("Failed to install service", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle service uninstallation
+	if *uninstallServiceFlag {
+		if err := systemd.UninstallService(); err != nil {
+			logger.Error("Failed to uninstall service", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *setupFlag {
 		if err := api.SetupAuthentication(context.Background()); err != nil {
