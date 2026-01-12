@@ -37,15 +37,27 @@ type Config struct {
 	IgnoreRegexps          []*regexp.Regexp
 }
 
+func GetConfigDir() string {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		userPath := filepath.Join(home, ".config", "gdrive-bisync", "config")
+		if _, err := os.Stat(filepath.Join(userPath, "config.json")); err == nil {
+			return userPath
+		}
+	}
+	return "config"
+}
+
 func Load() (*Config, error) {
 	config := DefaultConfig
+	path := filepath.Join(GetConfigDir(), "config.json")
 
-	data, err := os.ReadFile(ConfigPath)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		logger.Warn("No config/config.json found or error reading config. Using default settings.", "error", err)
+		logger.Warn("Config file not found or error reading it. Using default settings.", "path", path, "error", err)
 	} else {
 		if err := json.Unmarshal(data, &config); err != nil {
-			logger.Error("Error parsing config file", "error", err)
+			logger.Error("Error parsing config file", "path", path, "error", err)
 			return &config, err
 		}
 	}

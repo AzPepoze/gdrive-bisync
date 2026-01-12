@@ -20,7 +20,13 @@ var (
 	lastProgressLen int
 )
 
-const LogDir = "logs"
+func GetLogDir() string {
+	tmpDir := "/tmp/gdrive-bisync-logs"
+	if err := os.MkdirAll(tmpDir, 0755); err == nil {
+		return tmpDir
+	}
+	return "logs"
+}
 
 type ConsoleHandler struct {
 	w    io.Writer
@@ -126,11 +132,12 @@ func (m *MultiHandler) WithGroup(name string) slog.Handler {
 
 func Init() {
 	once.Do(func() {
-		if err := os.MkdirAll(LogDir, 0755); err != nil {
-			panic(fmt.Sprintf("Failed to create log directory: %v", err))
+		logDir := GetLogDir()
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create log directory: %v\n", err)
 		}
 
-		filename := filepath.Join(LogDir, fmt.Sprintf("sync-%s.log", time.Now().Format("2006-01-02")))
+		filename := filepath.Join(logDir, fmt.Sprintf("sync-%s.log", time.Now().Format("2006-01-02")))
 		f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			panic(fmt.Sprintf("Failed to open log file: %v", err))
