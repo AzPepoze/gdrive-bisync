@@ -40,22 +40,8 @@ yay -S gdrive-bisync
 paru -S gdrive-bisync
 ```
 
-> [!IMPORTANT]
-> You can manage the sync service using `systemctl --user`:
->
-> ```bash
-> # Reload configuration
-> systemctl --user daemon-reload
->
-> # Enable and start the service
-> systemctl --user enable --now gdrive-bisync
->
-> # Check status
-> systemctl --user status gdrive-bisync
->
-> # View real-time logs
-> journalctl --user -u gdrive-bisync -f
-> ```
+> [!WARNING]
+> When uninstalling the package, your configuration files in `~/.config/gdrive-bisync/` are preserved. Remove them manually if needed.
 
 ## From Releases
 
