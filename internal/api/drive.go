@@ -228,6 +228,8 @@ func (s *DriveService) FetchChanges(pageToken string) ([]*drive.Change, string, 
 
 // DownloadFile downloads a file from Drive.
 func (s *DriveService) DownloadFile(fileId string, destinationPath string) error {
+	logger.Debug("Downloading file from Google Drive", "fileId", fileId, "destination", destinationPath)
+	
 	res, err := s.srv.Files.Get(fileId).Download()
 	if err != nil {
 		return err
@@ -240,7 +242,10 @@ func (s *DriveService) DownloadFile(fileId string, destinationPath string) error
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, res.Body)
+	written, err := io.Copy(out, res.Body)
+	if err == nil {
+		logger.Debug("File downloaded successfully", "size", fmt.Sprintf("%.2f KB", float64(written)/1024), "destination", destinationPath)
+	}
 	return err
 }
 
@@ -256,16 +261,34 @@ func (s *DriveService) UploadOrUpdateFile(localPath string, remoteInfo struct {
 	}
 	defer f.Close()
 
-	if remoteInfo.FileID != "" {
-		file := &drive.File{}
-		return s.srv.Files.Update(remoteInfo.FileID, file).Media(f).Fields("id, name, modifiedTime, md5Checksum").Do()
+	// Get file size for logging
+	fileInfo, err := f.Stat()
+	if err == nil {
+		fileSize := float64(fileInfo.Size()) / 1024
+		if remoteInfo.FileID != "" {
+			logger.Debug("Updating file on Google Drive", "name", remoteInfo.Name, "size", fmt.Sprintf("%.2f KB", fileSize), "fileId", remoteInfo.FileID)
+		} else {
+			logger.Debug("Uploading new file to Google Drive", "name", remoteInfo.Name, "size", fmt.Sprintf("%.2f KB", fileSize))
+		}
 	}
 
-	file := &drive.File{
-		Name:    remoteInfo.Name,
-		Parents: []string{remoteInfo.FolderID},
+	var result *drive.File
+	if remoteInfo.FileID != "" {
+		file := &drive.File{}
+		result, err = s.srv.Files.Update(remoteInfo.FileID, file).Media(f).Fields("id, name, modifiedTime, md5Checksum").Do()
+	} else {
+		file := &drive.File{
+			Name:    remoteInfo.Name,
+			Parents: []string{remoteInfo.FolderID},
+		}
+		result, err = s.srv.Files.Create(file).Media(f).Fields("id, name, modifiedTime, md5Checksum").Do()
 	}
-	return s.srv.Files.Create(file).Media(f).Fields("id, name, modifiedTime, md5Checksum").Do()
+
+	if err == nil {
+		logger.Debug("File operation completed successfully", "name", remoteInfo.Name, "id", result.Id)
+	}
+
+	return result, err
 }
 
 // CreateFolder creates a folder.

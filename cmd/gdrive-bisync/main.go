@@ -153,7 +153,9 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
+	nextSyncTime := time.Now().Add(time.Duration(cfg.PeriodicSyncIntervalMs) * time.Millisecond)
 	logger.Info("Application started. Press Ctrl+C to stop.")
+	logger.Info("Next periodic sync scheduled", "time", nextSyncTime.Format("2006-01-02 15:04:05"))
 
 	go func() {
 		for range ticker.C {
@@ -162,6 +164,10 @@ func main() {
 				logger.Error("Periodic sync failed", "error", err)
 			}
 			saveState()
+			
+			// Log next sync time
+			nextSyncTime = time.Now().Add(time.Duration(cfg.PeriodicSyncIntervalMs) * time.Millisecond)
+			logger.Info("Next periodic sync scheduled", "time", nextSyncTime.Format("2006-01-02 15:04:05"))
 		}
 	}()
 

@@ -267,51 +267,53 @@ func Sync(
 			logger.Info(fmt.Sprintf("[%d/%d] %s: %s", i+1, len(tasks), task.Action.String(), task.FilePath))
 
 			switch task.Action {
-			case types.ActionDownloadNew, types.ActionDownloadUpdate:
-				if remoteFile != nil && remoteFile.ID != "" {
-					if err := os.MkdirAll(filepath.Dir(localFilePath), 0755); err != nil {
-						logger.Error("Failed to create dir", "path", filepath.Dir(localFilePath), "error", err)
-						continue
-					}
-					if err := driveService.DownloadFile(remoteFile.ID, localFilePath); err != nil {
-						logger.Error("Failed to download file", "path", task.FilePath, "error", err)
-						continue
-					}
-					metadata[task.FilePath] = &types.FileMetadata{RemoteMD5Checksum: remoteFile.MD5Checksum}
-				} else {
-					logger.Warn("Skipping download, remote ID missing", "path", task.FilePath)
-				}
-
-			case types.ActionUploadNew, types.ActionUploadUpdate, types.ActionUploadConflict:
-				parentPath := filepath.Dir(task.FilePath)
-				parentFolderID := cfg.RemoteFolderID
-				if parentPath != "." {
-					if parent, ok := remoteFiles[parentPath]; ok {
-						parentFolderID = parent.ID
-					} else {
-						logger.Error("Could not find remote parent folder", "path", task.FilePath)
-						continue
-					}
-				}
-
-				remoteInfo := struct {
-					Name     string
-					FolderID string
-					FileID   string
-				}{
-					Name:     filepath.Base(task.FilePath),
-					FolderID: parentFolderID,
-				}
-				if remoteFile != nil {
-					remoteInfo.FileID = remoteFile.ID
-				}
-
-				uploadedFile, err := driveService.UploadOrUpdateFile(localFilePath, remoteInfo)
-				if err != nil {
-					logger.Error("Failed to upload/update file", "path", task.FilePath, "error", err)
+		case types.ActionDownloadNew, types.ActionDownloadUpdate:
+			if remoteFile != nil && remoteFile.ID != "" {
+				if err := os.MkdirAll(filepath.Dir(localFilePath), 0755); err != nil {
+					logger.Error("Failed to create dir", "path", filepath.Dir(localFilePath), "error", err)
 					continue
 				}
-				metadata[task.FilePath] = &types.FileMetadata{RemoteMD5Checksum: uploadedFile.Md5Checksum}
+				logger.Info("Downloading file from Google Drive", "path", task.FilePath)
+				if err := driveService.DownloadFile(remoteFile.ID, localFilePath); err != nil {
+					logger.Error("Failed to download file", "path", task.FilePath, "error", err)
+					continue
+				}
+			metadata[task.FilePath] = &types.FileMetadata{RemoteMD5Checksum: remoteFile.MD5Checksum}
+		} else {
+			logger.Warn("Skipping download, remote ID missing", "path", task.FilePath)
+		}
+
+		case types.ActionUploadNew, types.ActionUploadUpdate, types.ActionUploadConflict:
+			parentPath := filepath.Dir(task.FilePath)
+			parentFolderID := cfg.RemoteFolderID
+			if parentPath != "." {
+				if parent, ok := remoteFiles[parentPath]; ok {
+					parentFolderID = parent.ID
+				} else {
+					logger.Error("Could not find remote parent folder", "path", task.FilePath)
+					continue
+				}
+			}
+
+			remoteInfo := struct {
+				Name     string
+				FolderID string
+				FileID   string
+			}{
+				Name:     filepath.Base(task.FilePath),
+				FolderID: parentFolderID,
+			}
+			if remoteFile != nil {
+				remoteInfo.FileID = remoteFile.ID
+			}
+
+			logger.Info("Uploading file to Google Drive", "path", task.FilePath)
+			uploadedFile, err := driveService.UploadOrUpdateFile(localFilePath, remoteInfo)
+			if err != nil {
+				logger.Error("Failed to upload/update file", "path", task.FilePath, "error", err)
+				continue
+			}
+			metadata[task.FilePath] = &types.FileMetadata{RemoteMD5Checksum: uploadedFile.Md5Checksum}
 
 			case types.ActionDeleteLocal:
 				if err := os.Remove(localFilePath); err != nil {
