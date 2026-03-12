@@ -253,7 +253,10 @@ func Sync(
 	}
 
 	if dbStore != nil {
-		if err := dbStore.SaveMetadata(changedMetadata, deletedMetadataPaths); err != nil {
+		if err := dbStore.ReplaceAllRemoteFiles(remoteFiles); err != nil {
+			logger.Error("Failed to save remote files", "error", err)
+		}
+		if err := dbStore.SaveMetadata(metadata, deletedMetadataPaths); err != nil {
 			logger.Error("Failed to save metadata", "error", err)
 		}
 		if err := dbStore.SavePageToken(*pageToken); err != nil {

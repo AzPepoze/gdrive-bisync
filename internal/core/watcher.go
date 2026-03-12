@@ -57,6 +57,7 @@ func WatchLocalFiles(
 	logger.Info(fmt.Sprintf("Watching for local changes in: %s", localPath))
 
 	debounceTimers := make(map[string]*time.Timer)
+	debounceOps := make(map[string]fsnotify.Op)
 
 	for {
 		select {
@@ -93,12 +94,14 @@ func WatchLocalFiles(
 				timer.Stop()
 			}
 
-			eventCopy := event
+			debounceOps[relativePath] |= event.Op
 			relPathCopy := relativePath
+			mergedEvent := fsnotify.Event{Name: event.Name, Op: debounceOps[relativePath]}
 
 			debounceTimers[relativePath] = time.AfterFunc(time.Duration(cfg.WatchDebounceDelay)*time.Millisecond, func() {
 				delete(debounceTimers, relPathCopy)
-				handleWatchEvent(eventCopy, localPath, relPathCopy, driveService, sharedState, cfg, dbStore)
+				delete(debounceOps, relPathCopy)
+				handleWatchEvent(mergedEvent, localPath, relPathCopy, driveService, sharedState, cfg, dbStore)
 			})
 
 		case err, ok := <-watcher.Errors:

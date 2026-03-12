@@ -164,7 +164,17 @@ func (executor *Executor) uploadWithRetry(ctx context.Context, task types.SyncTa
 		logger.Info("Uploading file to Google Drive", "path", task.FilePath, "attempt", attempt)
 		uploadedFile, err := executor.driveService.UploadOrUpdateFile(localFilePath, remoteInfo)
 		if err == nil {
+			modTime, _ := time.Parse(time.RFC3339, uploadedFile.ModifiedTime)
+			newDriveFile := &types.DriveFile{
+				ID:           uploadedFile.Id,
+				Name:         uploadedFile.Name,
+				Path:         task.FilePath,
+				ModifiedTime: modTime,
+				MD5Checksum:  uploadedFile.Md5Checksum,
+				IsDirectory:  false,
+			}
 			executor.metaMu.Lock()
+			executor.remoteFiles[task.FilePath] = newDriveFile
 			if existing, exists := executor.metadata[task.FilePath]; exists {
 				existing.RemoteMD5Checksum = uploadedFile.Md5Checksum
 			} else {
