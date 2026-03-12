@@ -18,7 +18,10 @@ var (
 		WatchDebounceDelay:     5000,
 		PeriodicSyncIntervalMs: 1 * 60 * 1000, // 1 minute
 		MaxConcurrentScans:     20,
+		MaxConcurrentDownloads: 20,
+		MaxConcurrentUploads:   10,
 		MaxRetries:             10,
+		ShowLogs:               false,
 		Ignore:                 []string{`(^|.*[\\/])node_modules([\\/].*|$)`},
 	}
 )
@@ -32,7 +35,10 @@ type Config struct {
 	WatchDebounceDelay     int      `json:"WATCH_DEBOUNCE_DELAY"`
 	PeriodicSyncIntervalMs int      `json:"PERIODIC_SYNC_INTERVAL_MS"`
 	MaxConcurrentScans     int      `json:"MAX_CONCURRENT_SCANS"`
+	MaxConcurrentDownloads int      `json:"MAX_CONCURRENT_DOWNLOADS"`
+	MaxConcurrentUploads   int      `json:"MAX_CONCURRENT_UPLOADS"`
 	MaxRetries             int      `json:"MAX_RETRIES"`
+	ShowLogs               bool     `json:"SHOW_LOGS"`
 	IgnoreRegexps          []*regexp.Regexp
 }
 

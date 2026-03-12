@@ -130,7 +130,7 @@ func (m *MultiHandler) WithGroup(name string) slog.Handler {
 	return &MultiHandler{handlers: handlers}
 }
 
-func Init() {
+func Init(showLogs bool) {
 	once.Do(func() {
 		logDir := GetLogDir()
 		if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -150,8 +150,14 @@ func Init() {
 		})
 
 		// Console Handler: Pretty text, Level INFO (user friendly)
+		// If showLogs is false, we set the level to something very high to effectively disable it
+		consoleLevel := slog.LevelInfo
+		if !showLogs {
+			consoleLevel = slog.LevelError + 100 // Silent except for maybe critical stuff if we add it
+		}
+
 		consoleHandler := NewConsoleHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
+			Level: consoleLevel,
 		})
 
 		// Combine them
@@ -193,21 +199,21 @@ func UpdateStatus(msg string) {
 }
 
 func Info(msg string, args ...any) {
-	if Log == nil { Init() }
+	if Log == nil { Init(false) }
 	Log.Info(msg, args...)
 }
 
 func Error(msg string, args ...any) {
-	if Log == nil { Init() }
+	if Log == nil { Init(false) }
 	Log.Error(msg, args...)
 }
 
 func Warn(msg string, args ...any) {
-	if Log == nil { Init() }
+	if Log == nil { Init(false) }
 	Log.Warn(msg, args...)
 }
 
 func Debug(msg string, args ...any) {
-	if Log == nil { Init() }
+	if Log == nil { Init(false) }
 	Log.Debug(msg, args...)
 }

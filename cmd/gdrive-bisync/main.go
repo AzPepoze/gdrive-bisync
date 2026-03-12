@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"flag"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/spf13/pflag"
 
 	"gdrive-bisync/internal/api"
 	"gdrive-bisync/internal/config"
@@ -19,17 +20,17 @@ import (
 )
 
 func main() {
-	setupFlag := flag.Bool("setup", false, "Run authentication setup")
-	forceFlag := flag.Bool("force", false, "Force a fresh sync by deleting metadata and state files")
-	installServiceFlag := flag.Bool("install-service", false, "Install systemd user service (Linux only)")
-	uninstallServiceFlag := flag.Bool("uninstall-service", false, "Uninstall systemd user service (Linux only)")
-	flag.Parse()
-
-	logger.Init()
-	defer logger.Close()
+	setupFlag := pflag.BoolP("setup", "s", false, "Run authentication setup")
+	forceFlag := pflag.BoolP("force", "f", false, "Force a fresh sync by deleting metadata and state files")
+	installServiceFlag := pflag.Bool("install-service", false, "Install systemd user service (Linux only)")
+	uninstallServiceFlag := pflag.Bool("uninstall-service", false, "Uninstall systemd user service (Linux only)")
+	showLogsFlag := pflag.BoolP("show-logs", "l", false, "Enable logging output to console")
+	pflag.Parse()
 
 	// Handle service installation
 	if *installServiceFlag {
+		logger.Init(true) // Always show logs for install/uninstall
+		defer logger.Close()
 		if err := systemd.InstallService(); err != nil {
 			logger.Error("Failed to install service", "error", err)
 			os.Exit(1)
@@ -39,12 +40,27 @@ func main() {
 
 	// Handle service uninstallation
 	if *uninstallServiceFlag {
+		logger.Init(true)
+		defer logger.Close()
 		if err := systemd.UninstallService(); err != nil {
 			logger.Error("Failed to uninstall service", "error", err)
 			os.Exit(1)
 		}
 		return
 	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Init(true)
+		defer logger.Close()
+		logger.Error("Failed to load config", "error", err)
+		os.Exit(1)
+	}
+
+	// Initialize logger based on flag or config
+	showLogs := *showLogsFlag || cfg.ShowLogs
+	logger.Init(showLogs)
+	defer logger.Close()
 
 	if *setupFlag {
 		if err := api.SetupAuthentication(context.Background()); err != nil {
@@ -53,12 +69,6 @@ func main() {
 		}
 		logger.Info("Setup complete. You can now run the application without flags.")
 		return
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		logger.Error("Failed to load config", "error", err)
-		os.Exit(1)
 	}
 
 	resolvedLocalPath := utils.ResolvePath(cfg.LocalSyncPath)
