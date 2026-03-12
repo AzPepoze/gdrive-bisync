@@ -23,7 +23,10 @@ type LocalFile struct {
 type LocalFileMap map[string]*LocalFile
 
 type FileMetadata struct {
-	RemoteMD5Checksum string `json:"remoteMd5Checksum"`
+	RemoteMD5Checksum string    `json:"remoteMd5Checksum"`
+	LocalMD5Checksum  string    `json:"localMd5Checksum"`
+	LocalModTime      time.Time `json:"localModTime"`
+	LocalSize         int64     `json:"localSize"`
 }
 
 type SyncAction int

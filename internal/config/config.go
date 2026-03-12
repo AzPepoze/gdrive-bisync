@@ -13,10 +13,11 @@ var (
 	DefaultConfig = Config{
 		LocalSyncPath:          "~/GoogleDrive",
 		RemoteFolderID:         "root",
+		DBFileName:             ".gdrive-bisync.db",
 		MetadataFileName:       ".gdrive-bisync-metadata.json",
 		StateFileName:          ".gdrive-bisync-state.json",
 		WatchDebounceDelay:     5000,
-		PeriodicSyncIntervalMs: 1 * 60 * 1000, // 1 minute
+		PeriodicSyncIntervalMs: 1 * 60 * 1000,
 		MaxConcurrentScans:     20,
 		MaxConcurrentDownloads: 20,
 		MaxConcurrentUploads:   10,
@@ -30,6 +31,7 @@ type Config struct {
 	Ignore                 []string `json:"ignore"`
 	LocalSyncPath          string   `json:"LOCAL_SYNC_PATH"`
 	RemoteFolderID         string   `json:"REMOTE_FOLDER_ID"`
+	DBFileName             string   `json:"DB_FILE_NAME"`
 	MetadataFileName       string   `json:"METADATA_FILE_NAME"`
 	StateFileName          string   `json:"STATE_FILE_NAME"`
 	WatchDebounceDelay     int      `json:"WATCH_DEBOUNCE_DELAY"`
@@ -67,6 +69,10 @@ func Load() (*Config, error) {
 		}
 	}
 
+	if config.DBFileName != "" {
+		escaped := regexp.QuoteMeta(config.DBFileName)
+		config.Ignore = append(config.Ignore, "^"+escaped+"$")
+	}
 	if config.MetadataFileName != "" {
 		escaped := regexp.QuoteMeta(config.MetadataFileName)
 		config.Ignore = append(config.Ignore, "^"+escaped+"$")

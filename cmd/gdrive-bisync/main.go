@@ -15,21 +15,21 @@ import (
 	"gdrive-bisync/internal/core"
 	"gdrive-bisync/internal/services/logger"
 	"gdrive-bisync/internal/services/systemd"
+	"gdrive-bisync/internal/store"
 	"gdrive-bisync/internal/types"
 	"gdrive-bisync/internal/utils"
 )
 
 func main() {
 	setupFlag := pflag.BoolP("setup", "s", false, "Run authentication setup")
-	forceFlag := pflag.BoolP("force", "f", false, "Force a fresh sync by deleting metadata and state files")
+	forceFlag := pflag.BoolP("force", "f", false, "Force a fresh sync by deleting the database")
 	installServiceFlag := pflag.Bool("install-service", false, "Install systemd user service (Linux only)")
 	uninstallServiceFlag := pflag.Bool("uninstall-service", false, "Uninstall systemd user service (Linux only)")
 	showLogsFlag := pflag.BoolP("show-logs", "l", false, "Enable logging output to console")
 	pflag.Parse()
 
-	// Handle service installation
 	if *installServiceFlag {
-		logger.Init(true) // Always show logs for install/uninstall
+		logger.Init(true)
 		defer logger.Close()
 		if err := systemd.InstallService(); err != nil {
 			logger.Error("Failed to install service", "error", err)
@@ -38,7 +38,6 @@ func main() {
 		return
 	}
 
-	// Handle service uninstallation
 	if *uninstallServiceFlag {
 		logger.Init(true)
 		defer logger.Close()
@@ -57,7 +56,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize logger based on flag or config
 	showLogs := *showLogsFlag || cfg.ShowLogs
 	logger.Init(showLogs)
 	defer logger.Close()
@@ -82,27 +80,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Force Reset Logic
-	statePath := filepath.Join(resolvedLocalPath, cfg.StateFileName)
-	metadataPath := filepath.Join(resolvedLocalPath, cfg.MetadataFileName)
+	dbPath := filepath.Join(resolvedLocalPath, cfg.DBFileName)
 
 	if *forceFlag {
-		logger.Info("Force flag detected. Resetting state...", "state", statePath, "metadata", metadataPath)
-		if err := os.Remove(statePath); err != nil {
-			if !os.IsNotExist(err) {
-				logger.Warn("Failed to remove state file", "error", err)
-			}
+		logger.Info("Force flag detected. Resetting state...", "db", dbPath)
+		if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+			logger.Warn("Failed to remove database file", "error", err)
 		} else {
-			logger.Info("Removed state file.")
+			logger.Info("Removed database file.")
 		}
-
-		if err := os.Remove(metadataPath); err != nil {
-			if !os.IsNotExist(err) {
-				logger.Warn("Failed to remove metadata file", "error", err)
-			}
-		} else {
-			logger.Info("Removed metadata file.")
-		}
+		legacyStatePath := filepath.Join(resolvedLocalPath, cfg.StateFileName)
+		legacyMetaPath := filepath.Join(resolvedLocalPath, cfg.MetadataFileName)
+		os.Remove(legacyStatePath)
+		os.Remove(legacyMetaPath)
 	}
 
 	authClient, err := api.Authorize(context.Background())
@@ -118,48 +108,53 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Load State
-	state, err := core.LoadState(statePath)
+	dbStore, err := store.Open(dbPath)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			logger.Warn("Failed to load state", "error", err)
-		} else {
-			logger.Info("No previous state found. Starting fresh.")
-		}
+		logger.Error("Failed to open database", "error", err)
+		os.Exit(1)
+	}
+	defer dbStore.Close()
 
-		// Initialize empty state
-		state = &core.State{
-			RemoteFiles: make(types.DriveFileMap),
-		}
+	remoteFiles, err := dbStore.LoadRemoteFiles()
+	if err != nil {
+		logger.Warn("Failed to load remote files from database, starting fresh", "error", err)
+		remoteFiles = make(types.DriveFileMap)
 	} else {
-		logger.Info("Loaded previous state.", "files", len(state.RemoteFiles), "token", state.PageToken)
+		logger.Info("Loaded remote files from database.", "files", len(remoteFiles))
 	}
 
-	metadata := make(map[string]*types.FileMetadata)
-
-	// Helper to save state
-	saveState := func() {
-		if err := core.SaveState(statePath, state); err != nil {
-			logger.Error("Failed to save state", "error", err)
-		} else {
-			logger.Debug("State saved.")
-		}
+	metadata, err := dbStore.LoadMetadata()
+	if err != nil {
+		logger.Warn("Failed to load metadata from database, starting fresh", "error", err)
+		metadata = make(map[string]*types.FileMetadata)
+	} else {
+		logger.Info("Loaded metadata from database.", "entries", len(metadata))
 	}
 
-	// Initial Sync
-	if err := core.Sync(driveService, state.RemoteFiles, metadata, cfg, &state.PageToken); err != nil {
-		logger.Error("Initial sync failed", "error", err)
+	pageToken, err := dbStore.LoadPageToken()
+	if err != nil {
+		logger.Warn("Failed to load page token", "error", err)
 	}
-	saveState()
 
-	// Watcher
-	go core.WatchLocalFiles(resolvedLocalPath, driveService, state.RemoteFiles, metadata, cfg)
+	sharedState := core.NewSharedState(remoteFiles, metadata, pageToken)
 
-	// Periodic Sync
+	runSync := func() {
+		token := sharedState.GetPageToken()
+		sharedState.RunExclusive(func(remoteFilesMap types.DriveFileMap, metadataMap map[string]*types.FileMetadata) {
+			if err := core.Sync(driveService, remoteFilesMap, metadataMap, cfg, &token, dbStore); err != nil {
+				logger.Error("Sync failed", "error", err)
+			}
+		})
+		sharedState.SetPageToken(token)
+	}
+
+	runSync()
+
+	go core.WatchLocalFiles(resolvedLocalPath, driveService, sharedState, cfg, dbStore)
+
 	ticker := time.NewTicker(time.Duration(cfg.PeriodicSyncIntervalMs) * time.Millisecond)
 	defer ticker.Stop()
 
-	// Handle graceful shutdown
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
@@ -170,12 +165,7 @@ func main() {
 	go func() {
 		for range ticker.C {
 			logger.Info("Triggering periodic sync...")
-			if err := core.Sync(driveService, state.RemoteFiles, metadata, cfg, &state.PageToken); err != nil {
-				logger.Error("Periodic sync failed", "error", err)
-			}
-			saveState()
-			
-			// Log next sync time
+			runSync()
 			nextSyncTime = time.Now().Add(time.Duration(cfg.PeriodicSyncIntervalMs) * time.Millisecond)
 			logger.Info("Next periodic sync scheduled", "time", nextSyncTime.Format("2006-01-02 15:04:05"))
 		}
@@ -183,5 +173,4 @@ func main() {
 
 	<-sigs
 	logger.Info("Shutting down...")
-	saveState()
 }

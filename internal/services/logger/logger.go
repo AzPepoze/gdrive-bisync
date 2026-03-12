@@ -15,9 +15,12 @@ var (
 	Log     *slog.Logger
 	logFile *os.File
 	once    sync.Once
-	
-	outputMu        sync.Mutex
-	lastProgressLen int
+
+	outputMu           sync.Mutex
+	lastProgressLen    int
+	currentProgressMsg string
+
+	consoleLevelVar = &slog.LevelVar{}
 )
 
 func GetLogDir() string {
@@ -45,33 +48,29 @@ func (h *ConsoleHandler) Handle(ctx context.Context, r slog.Record) error {
 	outputMu.Lock()
 	defer outputMu.Unlock()
 
-	// Clear any active progress line
 	if lastProgressLen > 0 {
-		fmt.Fprint(h.w, "\r\033[2K") 
+		fmt.Fprint(h.w, "\r\033[2K")
 		lastProgressLen = 0
 	}
 
 	level := r.Level.String()
 	t := r.Time.Format("2006-01-02 15:04:05")
-	
-	// Colorize level
+
 	var levelStr string
 	switch r.Level {
 	case slog.LevelDebug:
-		levelStr = "\033[36mDEBUG\033[0m" // Cyan
+		levelStr = "\033[36mDEBUG\033[0m"
 	case slog.LevelInfo:
-		levelStr = "\033[32mINFO \033[0m" // Green
+		levelStr = "\033[32mINFO \033[0m"
 	case slog.LevelWarn:
-		levelStr = "\033[33mWARN \033[0m" // Yellow
+		levelStr = "\033[33mWARN \033[0m"
 	case slog.LevelError:
-		levelStr = "\033[31mERROR\033[0m" // Red
+		levelStr = "\033[31mERROR\033[0m"
 	default:
 		levelStr = level
 	}
 
 	msg := r.Message
-	
-	// Format attributes
 	attrs := ""
 	r.Attrs(func(a slog.Attr) bool {
 		attrs += fmt.Sprintf(" %s=%v", a.Key, a.Value.Any())
@@ -79,6 +78,12 @@ func (h *ConsoleHandler) Handle(ctx context.Context, r slog.Record) error {
 	})
 
 	_, err := fmt.Fprintf(h.w, "%s [%s] %s%s\n", t, levelStr, msg, attrs)
+
+	if currentProgressMsg != "" {
+		fmt.Fprintf(h.w, "\r\033[36m[SCAN]\033[0m %s", currentProgressMsg)
+		lastProgressLen = len(currentProgressMsg) + 7
+	}
+
 	return err
 }
 
@@ -132,42 +137,40 @@ func (m *MultiHandler) WithGroup(name string) slog.Handler {
 
 func Init(showLogs bool) {
 	once.Do(func() {
-		logDir := GetLogDir()
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create log directory: %v\n", err)
-		}
-
-		filename := filepath.Join(logDir, fmt.Sprintf("sync-%s.log", time.Now().Format("2006-01-02")))
-		f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			panic(fmt.Sprintf("Failed to open log file: %v", err))
-		}
-		logFile = f
-
-		// File Handler: JSON or Text, Level DEBUG (stores everything)
-		fileHandler := slog.NewTextHandler(f, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		})
-
-		// Console Handler: Pretty text, Level INFO (user friendly)
-		// If showLogs is false, we set the level to something very high to effectively disable it
-		consoleLevel := slog.LevelInfo
-		if !showLogs {
-			consoleLevel = slog.LevelError + 100 // Silent except for maybe critical stuff if we add it
-		}
-
 		consoleHandler := NewConsoleHandler(os.Stdout, &slog.HandlerOptions{
-			Level: consoleLevel,
+			Level: consoleLevelVar,
 		})
 
-		// Combine them
-		multiHandler := &MultiHandler{
-			handlers: []slog.Handler{consoleHandler, fileHandler},
+		var handlers []slog.Handler
+		handlers = append(handlers, consoleHandler)
+
+		if showLogs {
+			logDir := GetLogDir()
+			if err := os.MkdirAll(logDir, 0755); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to create log directory: %v\n", err)
+			}
+			filename := filepath.Join(logDir, fmt.Sprintf("sync-%s.log", time.Now().Format("2006-01-02")))
+			f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to open log file: %v\n", err)
+			} else {
+				logFile = f
+				fileHandler := slog.NewTextHandler(f, &slog.HandlerOptions{
+					Level: slog.LevelDebug,
+				})
+				handlers = append(handlers, fileHandler)
+			}
 		}
 
-		Log = slog.New(multiHandler)
+		Log = slog.New(&MultiHandler{handlers: handlers})
 		slog.SetDefault(Log)
 	})
+
+	if showLogs {
+		consoleLevelVar.Set(slog.LevelInfo)
+	} else {
+		consoleLevelVar.Set(slog.LevelError + 100)
+	}
 }
 
 func Close() {
@@ -179,12 +182,13 @@ func Close() {
 func UpdateStatus(msg string) {
 	outputMu.Lock()
 	defer outputMu.Unlock()
-	
+
 	if lastProgressLen > 0 {
 		fmt.Print("\r\033[2K")
 	}
 
 	if msg == "" {
+		currentProgressMsg = ""
 		lastProgressLen = 0
 		return
 	}
@@ -193,7 +197,8 @@ func UpdateStatus(msg string) {
 	if len(msg) > maxLen {
 		msg = "..." + msg[len(msg)-(maxLen-3):]
 	}
-	
+
+	currentProgressMsg = msg
 	fmt.Printf("\r\033[36m[SCAN]\033[0m %s", msg)
 	lastProgressLen = len(msg) + 7
 }

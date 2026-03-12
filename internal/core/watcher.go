@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -13,15 +12,16 @@ import (
 	"gdrive-bisync/internal/api"
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
+	"gdrive-bisync/internal/store"
 	"gdrive-bisync/internal/types"
 )
 
 func WatchLocalFiles(
 	localPath string,
 	driveService *api.DriveService,
-	remoteFiles types.DriveFileMap,
-	metadata map[string]*types.FileMetadata,
+	sharedState *SharedState,
 	cfg *config.Config,
+	dbStore *store.Store,
 ) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -57,7 +57,6 @@ func WatchLocalFiles(
 	logger.Info(fmt.Sprintf("Watching for local changes in: %s", localPath))
 
 	debounceTimers := make(map[string]*time.Timer)
-	var timerMu sync.Mutex
 
 	for {
 		select {
@@ -90,22 +89,17 @@ func WatchLocalFiles(
 				}
 			}
 
-			timerMu.Lock()
-			if t, ok := debounceTimers[relativePath]; ok {
-				t.Stop()
+			if timer, ok := debounceTimers[relativePath]; ok {
+				timer.Stop()
 			}
 
-			evt := event
-			rPath := relativePath
+			eventCopy := event
+			relPathCopy := relativePath
 
 			debounceTimers[relativePath] = time.AfterFunc(time.Duration(cfg.WatchDebounceDelay)*time.Millisecond, func() {
-				timerMu.Lock()
-				delete(debounceTimers, rPath)
-				timerMu.Unlock()
-
-				handleEvent(evt, localPath, rPath, driveService, remoteFiles, metadata, cfg)
+				delete(debounceTimers, relPathCopy)
+				handleWatchEvent(eventCopy, localPath, relPathCopy, driveService, sharedState, cfg, dbStore)
 			})
-			timerMu.Unlock()
 
 		case err, ok := <-watcher.Errors:
 			if !ok {
@@ -116,19 +110,18 @@ func WatchLocalFiles(
 	}
 }
 
-func handleEvent(
+func handleWatchEvent(
 	event fsnotify.Event,
 	localRoot string,
 	relativePath string,
 	driveService *api.DriveService,
-	remoteFiles types.DriveFileMap,
-	metadata map[string]*types.FileMetadata,
+	sharedState *SharedState,
 	cfg *config.Config,
+	dbStore *store.Store,
 ) {
 	logger.Info(fmt.Sprintf("Processing change: %s %s", event.Op.String(), relativePath))
 
 	localFilePath := filepath.Join(localRoot, relativePath)
-	remoteFile := remoteFiles[relativePath]
 
 	if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
 		info, err := os.Stat(localFilePath)
@@ -140,14 +133,24 @@ func handleEvent(
 			return
 		}
 
+		var remoteFile *types.DriveFile
+		sharedState.ReadRemoteFiles(func(remoteFiles types.DriveFileMap, _ map[string]*types.FileMetadata) {
+			remoteFile = remoteFiles[relativePath]
+		})
+
 		logger.Info("Uploading", "path", relativePath)
 		parentPath := filepath.Dir(relativePath)
 		parentFolderID := cfg.RemoteFolderID
 
 		if parentPath != "." {
-			if parent, ok := remoteFiles[parentPath]; ok {
-				parentFolderID = parent.ID
-			} else {
+			var parentExists bool
+			sharedState.ReadRemoteFiles(func(remoteFiles types.DriveFileMap, _ map[string]*types.FileMetadata) {
+				if parent, ok := remoteFiles[parentPath]; ok {
+					parentFolderID = parent.ID
+					parentExists = true
+				}
+			})
+			if !parentExists {
 				logger.Error("Could not find remote parent folder", "path", relativePath)
 				return
 			}
@@ -171,36 +174,73 @@ func handleEvent(
 			return
 		}
 
-		metadata[relativePath] = &types.FileMetadata{RemoteMD5Checksum: uploadedFile.Md5Checksum}
-
-		remoteFiles[relativePath] = &types.DriveFile{
+		newDriveFile := &types.DriveFile{
 			ID:           uploadedFile.Id,
 			Name:         uploadedFile.Name,
 			Path:         relativePath,
-			ModifiedTime: time.Now(), 
+			ModifiedTime: time.Now(),
 			MD5Checksum:  uploadedFile.Md5Checksum,
 			IsDirectory:  false,
 		}
+
+		sharedState.WriteRemoteFiles(func(remoteFiles types.DriveFileMap, metadata map[string]*types.FileMetadata) string {
+			remoteFiles[relativePath] = newDriveFile
+			if existing, exists := metadata[relativePath]; exists {
+				existing.RemoteMD5Checksum = uploadedFile.Md5Checksum
+			} else {
+				metadata[relativePath] = &types.FileMetadata{RemoteMD5Checksum: uploadedFile.Md5Checksum}
+			}
+			return ""
+		})
+
+		if dbStore != nil {
+			changedRemote := types.DriveFileMap{relativePath: newDriveFile}
+			if err := dbStore.SaveRemoteFiles(changedRemote, nil); err != nil {
+				logger.Error("Failed to persist remote file to store", "path", relativePath, "error", err)
+			}
+		}
+
 		logger.Info("Uploaded", "path", relativePath)
 
 	} else if event.Op&fsnotify.Remove == fsnotify.Remove || event.Op&fsnotify.Rename == fsnotify.Rename {
+		var remoteFile *types.DriveFile
+		sharedState.ReadRemoteFiles(func(remoteFiles types.DriveFileMap, _ map[string]*types.FileMetadata) {
+			remoteFile = remoteFiles[relativePath]
+		})
+
 		if remoteFile != nil {
 			logger.Info("Deleting remote", "path", relativePath)
 			if err := driveService.TrashRemoteFile(remoteFile.ID); err != nil {
 				logger.Error("Failed to trash remote file", "path", relativePath, "error", err)
-			} else {
+				return
+			}
+
+			deletedPaths := []string{relativePath}
+			sharedState.WriteRemoteFiles(func(remoteFiles types.DriveFileMap, metadata map[string]*types.FileMetadata) string {
 				delete(metadata, relativePath)
 				delete(remoteFiles, relativePath)
 				if remoteFile.IsDirectory {
-					for k := range remoteFiles {
-						if strings.HasPrefix(k, relativePath+string(os.PathSeparator)) {
-							delete(remoteFiles, k)
-							delete(metadata, k)
+					prefix := relativePath + string(os.PathSeparator)
+					for key := range remoteFiles {
+						if strings.HasPrefix(key, prefix) {
+							delete(remoteFiles, key)
+							delete(metadata, key)
+							deletedPaths = append(deletedPaths, key)
 						}
 					}
 				}
-				logger.Info("Deleted remote", "path", relativePath)
+				return ""
+			})
+
+			if dbStore != nil {
+				if err := dbStore.SaveRemoteFiles(nil, deletedPaths); err != nil {
+					logger.Error("Failed to remove from store", "path", relativePath, "error", err)
+				}
+				if err := dbStore.SaveMetadata(nil, deletedPaths); err != nil {
+					logger.Error("Failed to remove metadata from store", "path", relativePath, "error", err)
+				}
 			}
+			logger.Info("Deleted remote", "path", relativePath)
 		}
 	}
 }

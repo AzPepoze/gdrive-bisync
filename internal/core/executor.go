@@ -42,7 +42,7 @@ func NewExecutor(
 	}
 }
 
-func (e *Executor) ExecuteTasks(tasks []types.SyncTask) error {
+func (executor *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 	if len(tasks) == 0 {
 		logger.Info("All files are up to date.")
 		return nil
@@ -50,42 +50,38 @@ func (e *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 
 	logger.Info(fmt.Sprintf("Executing %d sync tasks...", len(tasks)))
 
-	g, ctx := errgroup.WithContext(context.Background())
-	g.SetLimit(e.cfg.MaxConcurrentDownloads)
+	group, ctx := errgroup.WithContext(context.Background())
+	group.SetLimit(executor.cfg.MaxConcurrentDownloads)
 
-	for i, task := range tasks {
-		task := task // capture range variable
-		index := i + 1
+	for index, task := range tasks {
+		taskCopy := task
+		taskIndex := index + 1
 
 		switch task.Action {
 		case types.ActionDownloadNew, types.ActionDownloadUpdate:
-			g.Go(func() error {
-				return e.downloadWithRetry(ctx, task, index, len(tasks))
+			group.Go(func() error {
+				return executor.downloadWithRetry(ctx, taskCopy, taskIndex, len(tasks))
 			})
 
 		case types.ActionUploadNew, types.ActionUploadUpdate, types.ActionUploadConflict:
-			// Sequential uploads for now to avoid complexity, but could be parallelized later
-			e.handleUpload(task, index, len(tasks))
+			group.Go(func() error {
+				return executor.uploadWithRetry(ctx, taskCopy, taskIndex, len(tasks))
+			})
 
 		case types.ActionDeleteLocal:
-			e.handleDeleteLocal(task, index, len(tasks))
+			executor.handleDeleteLocal(taskCopy, taskIndex, len(tasks))
 
 		case types.ActionDeleteRemote:
-			e.handleDeleteRemote(task, index, len(tasks))
+			executor.handleDeleteRemote(taskCopy, taskIndex, len(tasks))
 		}
 	}
 
-	if err := g.Wait(); err != nil {
-		logger.Error("Some parallel tasks failed", "error", err)
-		return err
-	}
-
-	return nil
+	return group.Wait()
 }
 
-func (e *Executor) downloadWithRetry(ctx context.Context, task types.SyncTask, index, total int) error {
-	localFilePath := filepath.Join(e.localPath, task.FilePath)
-	remoteFile := e.remoteFiles[task.FilePath]
+func (executor *Executor) downloadWithRetry(ctx context.Context, task types.SyncTask, index, total int) error {
+	localFilePath := filepath.Join(executor.localPath, task.FilePath)
+	remoteFile := executor.remoteFiles[task.FilePath]
 
 	logger.Info(fmt.Sprintf("[%d/%d] %s: %s", index, total, task.Action.String(), task.FilePath))
 
@@ -108,11 +104,15 @@ func (e *Executor) downloadWithRetry(ctx context.Context, task types.SyncTask, i
 		}
 
 		logger.Info("Downloading file from Google Drive", "path", task.FilePath, "attempt", attempt)
-		err := e.driveService.DownloadFile(remoteFile.ID, localFilePath)
+		err := executor.driveService.DownloadFile(remoteFile.ID, localFilePath)
 		if err == nil {
-			e.metaMu.Lock()
-			e.metadata[task.FilePath] = &types.FileMetadata{RemoteMD5Checksum: remoteFile.MD5Checksum}
-			e.metaMu.Unlock()
+			executor.metaMu.Lock()
+			if existing, exists := executor.metadata[task.FilePath]; exists {
+				existing.RemoteMD5Checksum = remoteFile.MD5Checksum
+			} else {
+				executor.metadata[task.FilePath] = &types.FileMetadata{RemoteMD5Checksum: remoteFile.MD5Checksum}
+			}
+			executor.metaMu.Unlock()
 			return nil
 		}
 
@@ -125,19 +125,19 @@ func (e *Executor) downloadWithRetry(ctx context.Context, task types.SyncTask, i
 	return fmt.Errorf("failed to download %s after 10 attempts: %w", task.FilePath, lastErr)
 }
 
-func (e *Executor) handleUpload(task types.SyncTask, index, total int) {
+func (executor *Executor) uploadWithRetry(ctx context.Context, task types.SyncTask, index, total int) error {
 	logger.Info(fmt.Sprintf("[%d/%d] %s: %s", index, total, task.Action.String(), task.FilePath))
-	localFilePath := filepath.Join(e.localPath, task.FilePath)
-	remoteFile := e.remoteFiles[task.FilePath]
+	localFilePath := filepath.Join(executor.localPath, task.FilePath)
+	remoteFile := executor.remoteFiles[task.FilePath]
 
 	parentPath := filepath.Dir(task.FilePath)
-	parentFolderID := e.cfg.RemoteFolderID
+	parentFolderID := executor.cfg.RemoteFolderID
 	if parentPath != "." {
-		if parent, ok := e.remoteFiles[parentPath]; ok {
+		if parent, ok := executor.remoteFiles[parentPath]; ok {
 			parentFolderID = parent.ID
 		} else {
 			logger.Error("Could not find remote parent folder", "path", task.FilePath)
-			return
+			return nil
 		}
 	}
 
@@ -153,58 +153,76 @@ func (e *Executor) handleUpload(task types.SyncTask, index, total int) {
 		remoteInfo.FileID = remoteFile.ID
 	}
 
-	logger.Info("Uploading file to Google Drive", "path", task.FilePath)
-	uploadedFile, err := e.driveService.UploadOrUpdateFile(localFilePath, remoteInfo)
-	if err != nil {
-		logger.Error("Failed to upload/update file", "path", task.FilePath, "error", err)
-		return
-	}
+	var lastErr error
+	for attempt := 1; attempt <= 10; attempt++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 
-	e.metaMu.Lock()
-	e.metadata[task.FilePath] = &types.FileMetadata{RemoteMD5Checksum: uploadedFile.Md5Checksum}
-	e.metaMu.Unlock()
+		logger.Info("Uploading file to Google Drive", "path", task.FilePath, "attempt", attempt)
+		uploadedFile, err := executor.driveService.UploadOrUpdateFile(localFilePath, remoteInfo)
+		if err == nil {
+			executor.metaMu.Lock()
+			if existing, exists := executor.metadata[task.FilePath]; exists {
+				existing.RemoteMD5Checksum = uploadedFile.Md5Checksum
+			} else {
+				executor.metadata[task.FilePath] = &types.FileMetadata{RemoteMD5Checksum: uploadedFile.Md5Checksum}
+			}
+			executor.metaMu.Unlock()
+			return nil
+		}
+
+		lastErr = err
+		logger.Error("Failed to upload file", "path", task.FilePath, "error", err, "attempt", attempt)
+		if attempt < 10 {
+			time.Sleep(10 * time.Second)
+		}
+	}
+	return fmt.Errorf("failed to upload %s after 10 attempts: %w", task.FilePath, lastErr)
 }
 
-func (e *Executor) handleDeleteLocal(task types.SyncTask, index, total int) {
+func (executor *Executor) handleDeleteLocal(task types.SyncTask, index, total int) {
 	logger.Info(fmt.Sprintf("[%d/%d] %s: %s", index, total, task.Action.String(), task.FilePath))
-	localFilePath := filepath.Join(e.localPath, task.FilePath)
+	localFilePath := filepath.Join(executor.localPath, task.FilePath)
 
-	if err := os.Remove(localFilePath); err != nil {
+	if err := os.RemoveAll(localFilePath); err != nil {
 		if !os.IsNotExist(err) {
 			logger.Error("Failed to delete local file", "path", task.FilePath, "error", err)
 			return
 		}
 	}
 
-	e.metaMu.Lock()
-	delete(e.metadata, task.FilePath)
-	e.metaMu.Unlock()
+	executor.metaMu.Lock()
+	delete(executor.metadata, task.FilePath)
+	executor.metaMu.Unlock()
 }
 
-func (e *Executor) handleDeleteRemote(task types.SyncTask, index, total int) {
+func (executor *Executor) handleDeleteRemote(task types.SyncTask, index, total int) {
 	logger.Info(fmt.Sprintf("[%d/%d] %s: %s", index, total, task.Action.String(), task.FilePath))
-	remoteFile := e.remoteFiles[task.FilePath]
+	remoteFile := executor.remoteFiles[task.FilePath]
 
 	if remoteFile != nil && remoteFile.ID != "" {
-		if err := e.driveService.TrashRemoteFile(remoteFile.ID); err != nil {
+		if err := executor.driveService.TrashRemoteFile(remoteFile.ID); err != nil {
 			logger.Error("Failed to trash remote file", "path", task.FilePath, "error", err)
 			return
 		}
 
-		e.metaMu.Lock()
-		delete(e.metadata, task.FilePath)
-		delete(e.remoteFiles, task.FilePath)
+		executor.metaMu.Lock()
+		delete(executor.metadata, task.FilePath)
+		delete(executor.remoteFiles, task.FilePath)
 
 		if remoteFile.IsDirectory {
 			prefix := task.FilePath + string(os.PathSeparator)
-			for k := range e.remoteFiles {
-				if strings.HasPrefix(k, prefix) {
-					delete(e.remoteFiles, k)
-					delete(e.metadata, k)
+			for key := range executor.remoteFiles {
+				if strings.HasPrefix(key, prefix) {
+					delete(executor.remoteFiles, key)
+					delete(executor.metadata, key)
 				}
 			}
 		}
-		e.metaMu.Unlock()
+		executor.metaMu.Unlock()
 	} else {
 		logger.Warn("Skipping remote deletion, ID missing", "path", task.FilePath)
 	}

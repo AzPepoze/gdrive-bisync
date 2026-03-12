@@ -1,7 +1,6 @@
 package core
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
 	"gdrive-bisync/internal/services/scanner"
+	"gdrive-bisync/internal/store"
 	"gdrive-bisync/internal/types"
 	"gdrive-bisync/internal/utils"
 )
@@ -25,7 +25,8 @@ func Sync(
 	remoteFiles types.DriveFileMap,
 	metadata map[string]*types.FileMetadata,
 	cfg *config.Config,
-	pageToken *string, // Pointer to update the token
+	pageToken *string,
+	dbStore *store.Store,
 ) error {
 	resolvedLocalPath := utils.ResolvePath(cfg.LocalSyncPath)
 	if resolvedLocalPath == "" || cfg.RemoteFolderID == "" {
@@ -39,39 +40,8 @@ func Sync(
 
 	logger.Info("Starting sync cycle...")
 
-	// --- Metadata Loading ---
-	metadataPath := filepath.Join(resolvedLocalPath, cfg.MetadataFileName)
-	if len(metadata) == 0 {
-		data, err := os.ReadFile(metadataPath)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				logger.Error("Error loading sync metadata", "error", err)
-			} else {
-				logger.Warn("No sync metadata file found. Starting fresh.")
-			}
-		} else {
-			var rawEntries []json.RawMessage
-			if err := json.Unmarshal(data, &rawEntries); err == nil {
-				for _, raw := range rawEntries {
-					var entry []json.RawMessage
-					if err := json.Unmarshal(raw, &entry); err == nil && len(entry) == 2 {
-						var key string
-						var val types.FileMetadata
-						if err := json.Unmarshal(entry[0], &key); err == nil {
-							if err := json.Unmarshal(entry[1], &val); err == nil {
-								metadata[key] = &val
-							}
-						}
-					}
-				}
-				logger.Info("Loaded sync metadata.")
-			}
-		}
-	}
-
-	// File Scanning
 	logger.Info("Scanning local files...")
-	localFiles, err := scanner.GetLocalFilesRecursive(resolvedLocalPath, cfg.IgnoreRegexps, func(path string) {
+	localFiles, err := scanner.GetLocalFilesRecursive(resolvedLocalPath, cfg.IgnoreRegexps, metadata, func(path string) {
 		logger.UpdateStatus(fmt.Sprintf("Scanning local: %s", path))
 	})
 	if err != nil {
@@ -80,7 +50,6 @@ func Sync(
 	logger.UpdateStatus("")
 	logger.Info("Local scan complete.", "files", len(localFiles))
 
-	// Remote Scanning / Updating
 	if len(remoteFiles) == 0 || *pageToken == "" {
 		logger.Info("Performing full remote scan...", "concurrency", cfg.MaxConcurrentScans, "retries", cfg.MaxRetries)
 
@@ -106,16 +75,20 @@ func Sync(
 		logger.UpdateStatus("")
 		logger.Info("Remote scan complete.", "files", len(currentRemoteFiles))
 
-		// Replace map
-		for k := range remoteFiles {
-			delete(remoteFiles, k)
+		for key := range remoteFiles {
+			delete(remoteFiles, key)
 		}
-		for k, v := range currentRemoteFiles {
-			remoteFiles[k] = v
+		for key, value := range currentRemoteFiles {
+			remoteFiles[key] = value
+		}
+
+		if dbStore != nil {
+			if err := dbStore.ReplaceAllRemoteFiles(remoteFiles); err != nil {
+				logger.Error("Failed to persist remote files after full scan", "error", err)
+			}
 		}
 
 	} else {
-		// Incremental Update
 		logger.Info("Checking for remote changes...", "token", *pageToken)
 		changes, newToken, err := driveService.FetchChanges(*pageToken)
 		if err != nil {
@@ -124,16 +97,25 @@ func Sync(
 			return err
 		}
 
-		if len(changes) > 0 {
-			logger.Info(fmt.Sprintf("Processing %d remote changes...", len(changes)))
-			applyChanges(changes, remoteFiles, cfg.RemoteFolderID, cfg.IgnoreRegexps)
+		relevantChanges := filterRelevantChanges(changes, remoteFiles)
+		if len(relevantChanges) > 0 {
+			logger.Info(fmt.Sprintf("Processing %d relevant remote changes (of %d total)...", len(relevantChanges), len(changes)))
+			changedByApply, deletedByApply := applyChanges(relevantChanges, remoteFiles, cfg.RemoteFolderID, cfg.IgnoreRegexps)
+			if dbStore != nil {
+				if err := dbStore.SaveRemoteFiles(changedByApply, deletedByApply); err != nil {
+					logger.Error("Failed to persist incremental remote changes", "error", err)
+				}
+			}
 		} else {
 			logger.Info("No remote changes found.")
 		}
 		*pageToken = newToken
 	}
 
-	// Metadata Maintenance
+
+	changedMetadata := make(map[string]*types.FileMetadata)
+	deletedMetadataPaths := make([]string, 0)
+
 	for path, local := range localFiles {
 		if local.IsDirectory {
 			if _, remoteExists := remoteFiles[path]; remoteExists {
@@ -144,11 +126,10 @@ func Sync(
 		}
 	}
 
-	// Handle Folders
 	localFolders := make([]*types.LocalFile, 0)
-	for _, f := range localFiles {
-		if f.IsDirectory {
-			localFolders = append(localFolders, f)
+	for _, file := range localFiles {
+		if file.IsDirectory {
+			localFolders = append(localFolders, file)
 		}
 	}
 	sort.Slice(localFolders, func(i, j int) bool {
@@ -158,16 +139,30 @@ func Sync(
 	for _, folder := range localFolders {
 		if _, exists := remoteFiles[folder.Path]; !exists {
 			if _, inMetadata := metadata[folder.Path]; inMetadata {
+				childPrefix := folder.Path + string(os.PathSeparator)
+				childrenStillInRemote := false
+				for remotePath := range remoteFiles {
+					if strings.HasPrefix(remotePath, childPrefix) {
+						childrenStillInRemote = true
+						break
+					}
+				}
+				if childrenStillInRemote {
+					logger.Warn("Folder missing from remote map but children still present, skipping deletion", "path", folder.Path)
+					continue
+				}
+
 				logger.Info("Folder deleted remotely. Deleting locally.", "path", folder.Path)
 				fullPath := filepath.Join(resolvedLocalPath, folder.Path)
 				if err := os.RemoveAll(fullPath); err != nil {
 					logger.Error("Failed to delete local folder", "path", folder.Path, "error", err)
 				} else {
 					delete(metadata, folder.Path)
-					prefix := folder.Path + string(os.PathSeparator)
-					for k := range metadata {
-						if strings.HasPrefix(k, prefix) {
-							delete(metadata, k)
+					deletedMetadataPaths = append(deletedMetadataPaths, folder.Path)
+					for key := range metadata {
+						if strings.HasPrefix(key, childPrefix) {
+							delete(metadata, key)
+							deletedMetadataPaths = append(deletedMetadataPaths, key)
 						}
 					}
 				}
@@ -192,24 +187,30 @@ func Sync(
 				continue
 			}
 
-			remoteFiles[folder.Path] = &types.DriveFile{
+			newDriveFile := &types.DriveFile{
 				ID:           id,
 				Name:         filepath.Base(folder.Path),
 				Path:         folder.Path,
 				ModifiedTime: time.Now(),
 				IsDirectory:  true,
 			}
+			remoteFiles[folder.Path] = newDriveFile
+			if dbStore != nil {
+				if err := dbStore.SaveRemoteFiles(types.DriveFileMap{folder.Path: newDriveFile}, nil); err != nil {
+					logger.Error("Failed to persist new remote folder", "path", folder.Path, "error", err)
+				}
+			}
 			metadata[folder.Path] = &types.FileMetadata{}
+			changedMetadata[folder.Path] = metadata[folder.Path]
 		}
 	}
 
-	// Determine All Sync Tasks
 	allPaths := make(map[string]struct{})
-	for k := range localFiles {
-		allPaths[k] = struct{}{}
+	for key := range localFiles {
+		allPaths[key] = struct{}{}
 	}
-	for k := range remoteFiles {
-		allPaths[k] = struct{}{}
+	for key := range remoteFiles {
+		allPaths[key] = struct{}{}
 	}
 
 	var tasks []types.SyncTask
@@ -217,8 +218,6 @@ func Sync(
 	for pathStr := range allPaths {
 		local := localFiles[pathStr]
 		remote := remoteFiles[pathStr]
-
-		// Check Ignore Patterns AGAIN
 
 		ignored := false
 		for _, re := range cfg.IgnoreRegexps {
@@ -231,18 +230,12 @@ func Sync(
 			continue
 		}
 
-		// -----------------------------------
-
 		isDir := (local != nil && local.IsDirectory) || (remote != nil && remote.IsDirectory)
 
 		if isDir {
 			if local == nil && remote != nil {
 				if _, inMetadata := metadata[pathStr]; inMetadata {
 					tasks = append(tasks, types.SyncTask{Action: types.ActionDeleteRemote, FilePath: pathStr})
-				} else {
-					if _, inMetadata := metadata[pathStr]; inMetadata {
-						tasks = append(tasks, types.SyncTask{Action: types.ActionDeleteRemote, FilePath: pathStr})
-					}
 				}
 			}
 			continue
@@ -254,26 +247,17 @@ func Sync(
 		}
 	}
 
-	// Execute All Sync Tasks
 	executor := NewExecutor(driveService, remoteFiles, metadata, cfg, resolvedLocalPath)
 	if err := executor.ExecuteTasks(tasks); err != nil {
 		logger.Error("Sync tasks execution failed", "error", err)
 	}
 
-	// Save Metadata
-	var entries [][2]interface{}
-	for k, v := range metadata {
-		entries = append(entries, [2]interface{}{k, v})
-	}
-
-	metaDataBytes, err := json.Marshal(entries)
-	if err != nil {
-		logger.Error("Error marshaling sync metadata", "error", err)
-	} else {
-		if err := os.WriteFile(metadataPath, metaDataBytes, 0644); err != nil {
-			logger.Error("Error saving sync metadata", "error", err)
-		} else {
-			logger.Info("Sync metadata saved.")
+	if dbStore != nil {
+		if err := dbStore.SaveMetadata(changedMetadata, deletedMetadataPaths); err != nil {
+			logger.Error("Failed to save metadata", "error", err)
+		}
+		if err := dbStore.SavePageToken(*pageToken); err != nil {
+			logger.Error("Failed to save page token", "error", err)
 		}
 	}
 
@@ -282,11 +266,37 @@ func Sync(
 	return nil
 }
 
-// applyChanges updates the remoteFiles map based on the changes list.
-func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootFolderID string, ignoreRegexps []*regexp.Regexp) {
+func filterRelevantChanges(changes []*drive.Change, remoteFiles types.DriveFileMap) []*drive.Change {
+	knownIDs := make(map[string]struct{}, len(remoteFiles))
+	for _, driveFile := range remoteFiles {
+		knownIDs[driveFile.ID] = struct{}{}
+	}
+
+	relevant := make([]*drive.Change, 0, len(changes))
+	for _, change := range changes {
+		if _, known := knownIDs[change.FileId]; known {
+			relevant = append(relevant, change)
+			continue
+		}
+		if change.File != nil && len(change.File.Parents) > 0 {
+			for _, parentID := range change.File.Parents {
+				if _, known := knownIDs[parentID]; known {
+					relevant = append(relevant, change)
+					break
+				}
+			}
+		}
+	}
+	return relevant
+}
+
+func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootFolderID string, ignoreRegexps []*regexp.Regexp) (types.DriveFileMap, []string) {
+	changedFiles := make(types.DriveFileMap)
+	deletedPaths := make([]string, 0)
+
 	idToPath := make(map[string]string)
-	for path, file := range remoteFiles {
-		idToPath[file.ID] = path
+	for path, driveFile := range remoteFiles {
+		idToPath[driveFile.ID] = path
 	}
 
 	for _, change := range changes {
@@ -296,11 +306,13 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 				logger.Debug("Applying remote deletion", "path", path)
 				delete(remoteFiles, path)
 				delete(idToPath, change.FileId)
+				deletedPaths = append(deletedPaths, path)
 
-				prefix := path + string(os.PathSeparator)
-				for k := range remoteFiles {
-					if strings.HasPrefix(k, prefix) {
-						delete(remoteFiles, k)
+				childPrefix := path + string(os.PathSeparator)
+				for key := range remoteFiles {
+					if strings.HasPrefix(key, childPrefix) {
+						delete(remoteFiles, key)
+						deletedPaths = append(deletedPaths, key)
 					}
 				}
 			}
@@ -321,17 +333,7 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 			} else {
 				pPath, ok := idToPath[parentID]
 				if !ok {
-					if oldPath, exists := idToPath[change.FileId]; exists {
-						logger.Debug("File moved out of scope", "oldPath", oldPath)
-						delete(remoteFiles, oldPath)
-						delete(idToPath, change.FileId)
-						prefix := oldPath + string(os.PathSeparator)
-						for k := range remoteFiles {
-							if strings.HasPrefix(k, prefix) {
-								delete(remoteFiles, k)
-							}
-						}
-					}
+					logger.Debug("Parent not found in scope, skipping change to avoid false deletion", "fileId", change.FileId, "parentId", parentID)
 					continue
 				}
 				parentPath = pPath
@@ -339,7 +341,6 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 
 			newPath := filepath.Join(parentPath, file.Name)
 
-			// Check Ignore Patterns
 			ignored := false
 			for _, re := range ignoreRegexps {
 				if re.MatchString(newPath) {
@@ -351,50 +352,51 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 				if oldPath, exists := idToPath[change.FileId]; exists {
 					delete(remoteFiles, oldPath)
 					delete(idToPath, change.FileId)
+					deletedPaths = append(deletedPaths, oldPath)
 				}
 				continue
 			}
 
-			// -----------------------------
-
 			oldPath, exists := idToPath[change.FileId]
-
 			isDirectory := file.MimeType == "application/vnd.google-apps.folder"
 			modTime, _ := time.Parse(time.RFC3339, file.ModifiedTime)
 
 			if exists && oldPath != newPath {
 				logger.Debug("Applying remote move", "old", oldPath, "new", newPath)
 				delete(remoteFiles, oldPath)
+				deletedPaths = append(deletedPaths, oldPath)
 
 				if isDirectory {
 					oldPrefix := oldPath + string(os.PathSeparator)
 					newPrefix := newPath + string(os.PathSeparator)
 
 					type childMove struct {
-						oldK string
-						newK string
-						val  *types.DriveFile
+						oldKey string
+						newKey string
+						value  *types.DriveFile
 					}
 					var moves []childMove
 
-					for k, v := range remoteFiles {
-						if strings.HasPrefix(k, oldPrefix) {
-							suffix := strings.TrimPrefix(k, oldPrefix)
-							newK := newPrefix + suffix
-							moves = append(moves, childMove{k, newK, v})
+					for key, value := range remoteFiles {
+						if strings.HasPrefix(key, oldPrefix) {
+							suffix := strings.TrimPrefix(key, oldPrefix)
+							newKey := newPrefix + suffix
+							moves = append(moves, childMove{key, newKey, value})
 						}
 					}
 
-					for _, m := range moves {
-						delete(remoteFiles, m.oldK)
-						m.val.Path = m.newK
-						remoteFiles[m.newK] = m.val
-						idToPath[m.val.ID] = m.newK
+					for _, move := range moves {
+						delete(remoteFiles, move.oldKey)
+						deletedPaths = append(deletedPaths, move.oldKey)
+						move.value.Path = move.newKey
+						remoteFiles[move.newKey] = move.value
+						changedFiles[move.newKey] = move.value
+						idToPath[move.value.ID] = move.newKey
 					}
 				}
 			}
 
-			remoteFiles[newPath] = &types.DriveFile{
+			newDriveFile := &types.DriveFile{
 				ID:           file.Id,
 				Name:         file.Name,
 				Path:         newPath,
@@ -402,7 +404,12 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 				MD5Checksum:  file.Md5Checksum,
 				IsDirectory:  isDirectory,
 			}
+			remoteFiles[newPath] = newDriveFile
+			changedFiles[newPath] = newDriveFile
 			idToPath[file.Id] = newPath
 		}
 	}
+
+	return changedFiles, deletedPaths
 }
+
