@@ -112,7 +112,6 @@ func Sync(
 		*pageToken = newToken
 	}
 
-
 	changedMetadata := make(map[string]*types.FileMetadata)
 	deletedMetadataPaths := make([]string, 0)
 
@@ -152,10 +151,10 @@ func Sync(
 					continue
 				}
 
-				logger.Info("Folder deleted remotely. Deleting locally.", "path", folder.Path)
+				logger.Info("Folder deleted remotely. Moving to trash.", "path", folder.Path)
 				fullPath := filepath.Join(resolvedLocalPath, folder.Path)
-				if err := os.RemoveAll(fullPath); err != nil {
-					logger.Error("Failed to delete local folder", "path", folder.Path, "error", err)
+				if err := utils.MoveToTrash(resolvedLocalPath, fullPath); err != nil {
+					logger.Error("Failed to move local folder to trash", "path", folder.Path, "error", err)
 				} else {
 					delete(metadata, folder.Path)
 					deletedMetadataPaths = append(deletedMetadataPaths, folder.Path)
@@ -415,4 +414,3 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 
 	return changedFiles, deletedPaths
 }
-

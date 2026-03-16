@@ -82,6 +82,8 @@ func Load() (*Config, error) {
 		config.Ignore = append(config.Ignore, "^"+escaped+"$")
 	}
 
+	config.Ignore = append(config.Ignore, `(^|.*[\\/])\.trash([\\/].*|$)`)
+
 	logger.Info("Final Ignore Patterns", "count", len(config.Ignore), "list", config.Ignore)
 
 	config.IgnoreRegexps = make([]*regexp.Regexp, 0, len(config.Ignore))

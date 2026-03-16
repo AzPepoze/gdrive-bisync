@@ -15,6 +15,7 @@ import (
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
 	"gdrive-bisync/internal/types"
+	"gdrive-bisync/internal/utils"
 )
 
 type Executor struct {
@@ -197,9 +198,11 @@ func (executor *Executor) handleDeleteLocal(task types.SyncTask, index, total in
 	logger.Info(fmt.Sprintf("[%d/%d] %s: %s", index, total, task.Action.String(), task.FilePath))
 	localFilePath := filepath.Join(executor.localPath, task.FilePath)
 
-	if err := os.RemoveAll(localFilePath); err != nil {
+	// Move to trash instead of permanently deleting
+	// This is only triggered when the remote file was deleted (not updated)
+	if err := utils.MoveToTrash(executor.localPath, localFilePath); err != nil {
 		if !os.IsNotExist(err) {
-			logger.Error("Failed to delete local file", "path", task.FilePath, "error", err)
+			logger.Error("Failed to move local file to trash", "path", task.FilePath, "error", err)
 			return
 		}
 	}
