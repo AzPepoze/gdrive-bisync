@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -206,44 +205,8 @@ func handleWatchEvent(
 		logger.Info("Uploaded", "path", relativePath)
 
 	} else if event.Op&fsnotify.Remove == fsnotify.Remove || event.Op&fsnotify.Rename == fsnotify.Rename {
-		var remoteFile *types.DriveFile
-		sharedState.ReadRemoteFiles(func(remoteFiles types.DriveFileMap, _ map[string]*types.FileMetadata) {
-			remoteFile = remoteFiles[relativePath]
-		})
-
-		if remoteFile != nil {
-			logger.Info("Deleting remote", "path", relativePath)
-			if err := driveService.TrashRemoteFile(remoteFile.ID); err != nil {
-				logger.Error("Failed to trash remote file", "path", relativePath, "error", err)
-				return
-			}
-
-			deletedPaths := []string{relativePath}
-			sharedState.WriteRemoteFiles(func(remoteFiles types.DriveFileMap, metadata map[string]*types.FileMetadata) string {
-				delete(metadata, relativePath)
-				delete(remoteFiles, relativePath)
-				if remoteFile.IsDirectory {
-					prefix := relativePath + string(os.PathSeparator)
-					for key := range remoteFiles {
-						if strings.HasPrefix(key, prefix) {
-							delete(remoteFiles, key)
-							delete(metadata, key)
-							deletedPaths = append(deletedPaths, key)
-						}
-					}
-				}
-				return ""
-			})
-
-			if dbStore != nil {
-				if err := dbStore.SaveRemoteFiles(nil, deletedPaths); err != nil {
-					logger.Error("Failed to remove from store", "path", relativePath, "error", err)
-				}
-				if err := dbStore.SaveMetadata(nil, deletedPaths); err != nil {
-					logger.Error("Failed to remove metadata from store", "path", relativePath, "error", err)
-				}
-			}
-			logger.Info("Deleted remote", "path", relativePath)
-		}
+		// Deletions and renames are intentionally handled by the sync cycle.
+		// This avoids destructive races where a local rename is interpreted as an immediate remote delete.
+		logger.Info("Deferring remove/rename reconciliation to sync cycle", "path", relativePath, "op", event.Op.String())
 	}
 }

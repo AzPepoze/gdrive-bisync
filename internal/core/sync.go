@@ -100,10 +100,13 @@ func Sync(
 		relevantChanges := filterRelevantChanges(changes, remoteFiles)
 		if len(relevantChanges) > 0 {
 			logger.Info(fmt.Sprintf("Processing %d relevant remote changes (of %d total)...", len(relevantChanges), len(changes)))
-			changedByApply, deletedByApply := applyChanges(relevantChanges, remoteFiles, cfg.RemoteFolderID, cfg.IgnoreRegexps)
+			changedByApply, deletedByApply, deletedMetadataByApply := applyChanges(relevantChanges, remoteFiles, metadata, cfg.RemoteFolderID, cfg.IgnoreRegexps)
 			if dbStore != nil {
 				if err := dbStore.SaveRemoteFiles(changedByApply, deletedByApply); err != nil {
 					logger.Error("Failed to persist incremental remote changes", "error", err)
+				}
+				if err := dbStore.SaveMetadata(metadata, deletedMetadataByApply); err != nil {
+					logger.Error("Failed to persist incremental metadata changes", "error", err)
 				}
 			}
 		} else {
@@ -292,9 +295,10 @@ func filterRelevantChanges(changes []*drive.Change, remoteFiles types.DriveFileM
 	return relevant
 }
 
-func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootFolderID string, ignoreRegexps []*regexp.Regexp) (types.DriveFileMap, []string) {
+func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, metadata map[string]*types.FileMetadata, rootFolderID string, ignoreRegexps []*regexp.Regexp) (types.DriveFileMap, []string, []string) {
 	changedFiles := make(types.DriveFileMap)
 	deletedPaths := make([]string, 0)
+	deletedMetadataPaths := make([]string, 0)
 
 	idToPath := make(map[string]string)
 	for path, driveFile := range remoteFiles {
@@ -307,14 +311,18 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 			if exists {
 				logger.Debug("Applying remote deletion", "path", path)
 				delete(remoteFiles, path)
+				delete(metadata, path)
 				delete(idToPath, change.FileId)
 				deletedPaths = append(deletedPaths, path)
+				deletedMetadataPaths = append(deletedMetadataPaths, path)
 
 				childPrefix := path + string(os.PathSeparator)
 				for key := range remoteFiles {
 					if strings.HasPrefix(key, childPrefix) {
 						delete(remoteFiles, key)
+						delete(metadata, key)
 						deletedPaths = append(deletedPaths, key)
+						deletedMetadataPaths = append(deletedMetadataPaths, key)
 					}
 				}
 			}
@@ -353,8 +361,10 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 			if ignored {
 				if oldPath, exists := idToPath[change.FileId]; exists {
 					delete(remoteFiles, oldPath)
+					delete(metadata, oldPath)
 					delete(idToPath, change.FileId)
 					deletedPaths = append(deletedPaths, oldPath)
+					deletedMetadataPaths = append(deletedMetadataPaths, oldPath)
 				}
 				continue
 			}
@@ -367,6 +377,11 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 				logger.Debug("Applying remote move", "old", oldPath, "new", newPath)
 				delete(remoteFiles, oldPath)
 				deletedPaths = append(deletedPaths, oldPath)
+				if oldMeta, metaExists := metadata[oldPath]; metaExists {
+					metadata[newPath] = oldMeta
+					delete(metadata, oldPath)
+					deletedMetadataPaths = append(deletedMetadataPaths, oldPath)
+				}
 
 				if isDirectory {
 					oldPrefix := oldPath + string(os.PathSeparator)
@@ -390,6 +405,11 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 					for _, move := range moves {
 						delete(remoteFiles, move.oldKey)
 						deletedPaths = append(deletedPaths, move.oldKey)
+						if oldMeta, metaExists := metadata[move.oldKey]; metaExists {
+							metadata[move.newKey] = oldMeta
+							delete(metadata, move.oldKey)
+							deletedMetadataPaths = append(deletedMetadataPaths, move.oldKey)
+						}
 						move.value.Path = move.newKey
 						remoteFiles[move.newKey] = move.value
 						changedFiles[move.newKey] = move.value
@@ -409,8 +429,17 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, rootF
 			remoteFiles[newPath] = newDriveFile
 			changedFiles[newPath] = newDriveFile
 			idToPath[file.Id] = newPath
+
+			if file.MimeType != "application/vnd.google-apps.folder" {
+				existing := metadata[newPath]
+				if existing == nil {
+					existing = &types.FileMetadata{}
+					metadata[newPath] = existing
+				}
+				existing.RemoteMD5Checksum = file.Md5Checksum
+			}
 		}
 	}
 
-	return changedFiles, deletedPaths
+	return changedFiles, deletedPaths, deletedMetadataPaths
 }

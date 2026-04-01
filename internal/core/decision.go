@@ -6,6 +6,34 @@ import (
 	"gdrive-bisync/internal/types"
 )
 
+func localChangedSinceSync(localFile *types.LocalFile, lastSyncedInfo *types.FileMetadata) bool {
+	if localFile == nil || lastSyncedInfo == nil {
+		return false
+	}
+
+	if localFile.MD5Checksum != "" && lastSyncedInfo.LocalMD5Checksum != "" {
+		return localFile.MD5Checksum != lastSyncedInfo.LocalMD5Checksum
+	}
+
+	if !lastSyncedInfo.LocalModTime.IsZero() {
+		return !localFile.ModTime.Equal(lastSyncedInfo.LocalModTime)
+	}
+
+	return false
+}
+
+func remoteChangedSinceSync(remoteFile *types.DriveFile, lastSyncedInfo *types.FileMetadata) bool {
+	if remoteFile == nil || lastSyncedInfo == nil {
+		return false
+	}
+
+	if remoteFile.MD5Checksum != "" && lastSyncedInfo.RemoteMD5Checksum != "" {
+		return remoteFile.MD5Checksum != lastSyncedInfo.RemoteMD5Checksum
+	}
+
+	return false
+}
+
 func DetermineSyncAction(
 	filePath string,
 	localFile *types.LocalFile,
@@ -17,11 +45,19 @@ func DetermineSyncAction(
 	// --- Deletion Logic ---
 	if hasSynced {
 		if localFile != nil && remoteFile == nil {
-			// File exists locally and was synced before, but now missing remotely
+			if localChangedSinceSync(localFile, lastSyncedInfo) {
+				// Local changed while remote disappeared. Protect local changes.
+				return types.ActionUploadNew
+			}
+			// File exists locally and was synced before, but now missing remotely and local is unchanged.
 			return types.ActionDeleteLocal
 		}
 		if localFile == nil && remoteFile != nil {
-			// File exists remotely and was synced before, but now missing locally
+			if remoteChangedSinceSync(remoteFile, lastSyncedInfo) {
+				// Remote changed since last sync. Avoid destructive delete and restore locally.
+				return types.ActionDownloadUpdate
+			}
+			// File exists remotely and was synced before, but now missing locally and remote is unchanged.
 			return types.ActionDeleteRemote
 		}
 	}
@@ -40,24 +76,35 @@ func DetermineSyncAction(
 			return types.ActionSkipIdentical
 		}
 
-		lastSyncedRemoteMd5 := ""
+		lastSyncedRemoteMD5 := ""
 		if hasSynced {
-			lastSyncedRemoteMd5 = lastSyncedInfo.RemoteMD5Checksum
+			lastSyncedRemoteMD5 = lastSyncedInfo.RemoteMD5Checksum
 		}
 
-		if lastSyncedRemoteMd5 == remoteFile.MD5Checksum {
-			// Remote file has not changed since last sync. Local is newer or different.
-			return types.ActionUploadUpdate
-		} else {
-			// Remote file has changed since last sync.
-			buffer := 2 * time.Second
-			if remoteFile.ModifiedTime.After(localFile.ModTime.Add(buffer)) {
+		if hasSynced {
+			remoteChanged := lastSyncedRemoteMD5 != "" && remoteFile.MD5Checksum != "" && lastSyncedRemoteMD5 != remoteFile.MD5Checksum
+			localChanged := localChangedSinceSync(localFile, lastSyncedInfo)
+
+			if !remoteChanged {
+				if localChanged {
+					return types.ActionUploadUpdate
+				}
+				return types.ActionSkipNoChange
+			}
+
+			if !localChanged {
 				return types.ActionDownloadUpdate
-			} else {
-				// Local is newer or we can't decide based on time, treat as conflict.
-				return types.ActionUploadConflict // Local version wins in this implementation
 			}
 		}
+
+		// Fallback for first sync or ambiguous metadata: retain local-protect policy.
+		buffer := 2 * time.Second
+		if remoteFile.ModifiedTime.After(localFile.ModTime.Add(buffer)) {
+			return types.ActionDownloadUpdate
+		}
+
+		// Local is newer or we can't decide based on time, treat as conflict.
+		return types.ActionUploadConflict // Local version wins in this implementation
 	}
 
 	return types.ActionSkipNoChange
