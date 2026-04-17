@@ -6,6 +6,8 @@ import (
 	"gdrive-bisync/internal/types"
 )
 
+const emptyFileMD5 = "d41d8cd98f00b204e9800998ecf8427e"
+
 func localChangedSinceSync(localFile *types.LocalFile, lastSyncedInfo *types.FileMetadata) bool {
 	if localFile == nil || lastSyncedInfo == nil {
 		return false
@@ -34,6 +36,22 @@ func remoteChangedSinceSync(remoteFile *types.DriveFile, lastSyncedInfo *types.F
 	return false
 }
 
+func likelyTransientEmptyLocalFile(localFile *types.LocalFile, lastSyncedInfo *types.FileMetadata) bool {
+	if localFile == nil || lastSyncedInfo == nil {
+		return false
+	}
+
+	if localFile.MD5Checksum != emptyFileMD5 || lastSyncedInfo.LocalMD5Checksum != emptyFileMD5 {
+		return false
+	}
+
+	if lastSyncedInfo.LocalModTime.IsZero() {
+		return false
+	}
+
+	return localFile.ModTime.After(lastSyncedInfo.LocalModTime)
+}
+
 func DetermineSyncAction(
 	filePath string,
 	localFile *types.LocalFile,
@@ -48,6 +66,11 @@ func DetermineSyncAction(
 			if localChangedSinceSync(localFile, lastSyncedInfo) {
 				// Local changed while remote disappeared. Protect local changes.
 				return types.ActionUploadNew
+			}
+			if likelyTransientEmptyLocalFile(localFile, lastSyncedInfo) {
+				// Some editors create/rename files through temporary 0-byte states.
+				// Avoid deleting local content while it is still being settled.
+				return types.ActionSkipNoChange
 			}
 			// File exists locally and was synced before, but now missing remotely and local is unchanged.
 			return types.ActionDeleteLocal

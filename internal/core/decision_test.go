@@ -7,7 +7,7 @@ import (
 	"gdrive-bisync/internal/types"
 )
 
-func TestDetermineSyncAction_LocalMissingRemoteUnchanged_DeletesRemote(t *testing.T) {
+func TestDetermineSyncAction_WhenLocalMissingAndRemoteUnchanged_DeletesRemote(t *testing.T) {
 	now := time.Now()
 	metadata := map[string]*types.FileMetadata{
 		"a.txt": {
@@ -29,7 +29,7 @@ func TestDetermineSyncAction_LocalMissingRemoteUnchanged_DeletesRemote(t *testin
 	}
 }
 
-func TestDetermineSyncAction_LocalMissingRemoteChanged_DownloadsRemote(t *testing.T) {
+func TestDetermineSyncAction_WhenLocalMissingAndRemoteChanged_DownloadsRemote(t *testing.T) {
 	now := time.Now()
 	metadata := map[string]*types.FileMetadata{
 		"a.txt": {
@@ -51,7 +51,7 @@ func TestDetermineSyncAction_LocalMissingRemoteChanged_DownloadsRemote(t *testin
 	}
 }
 
-func TestDetermineSyncAction_RemoteMissingLocalChanged_UploadsNew(t *testing.T) {
+func TestDetermineSyncAction_WhenRemoteMissingAndLocalChanged_UploadsNew(t *testing.T) {
 	now := time.Now()
 	metadata := map[string]*types.FileMetadata{
 		"a.txt": {
@@ -73,7 +73,7 @@ func TestDetermineSyncAction_RemoteMissingLocalChanged_UploadsNew(t *testing.T) 
 	}
 }
 
-func TestDetermineSyncAction_BothChanged_PreservesLocalPolicy(t *testing.T) {
+func TestDetermineSyncAction_WhenBothChanged_PreservesLocalWinsPolicy(t *testing.T) {
 	now := time.Now()
 	metadata := map[string]*types.FileMetadata{
 		"a.txt": {
@@ -92,5 +92,49 @@ func TestDetermineSyncAction_BothChanged_PreservesLocalPolicy(t *testing.T) {
 
 	if action != types.ActionUploadConflict {
 		t.Fatalf("expected %v, got %v", types.ActionUploadConflict, action)
+	}
+}
+
+func TestDetermineSyncAction_WhenRemoteMissingAndLocalEmptyFileRecentlyTouched_SkipsDelete(t *testing.T) {
+	now := time.Now()
+	metadata := map[string]*types.FileMetadata{
+		"a.txt": {
+			RemoteMD5Checksum: "remote-md5",
+			LocalMD5Checksum:  "d41d8cd98f00b204e9800998ecf8427e",
+			LocalModTime:      now,
+		},
+	}
+
+	action := DetermineSyncAction(
+		"a.txt",
+		&types.LocalFile{Path: "a.txt", MD5Checksum: "d41d8cd98f00b204e9800998ecf8427e", ModTime: now.Add(time.Second)},
+		nil,
+		metadata,
+	)
+
+	if action != types.ActionSkipNoChange {
+		t.Fatalf("expected %v, got %v", types.ActionSkipNoChange, action)
+	}
+}
+
+func TestDetermineSyncAction_WhenRemoteMissingAndLocalEmptyFileUnchanged_DeletesLocal(t *testing.T) {
+	now := time.Now()
+	metadata := map[string]*types.FileMetadata{
+		"a.txt": {
+			RemoteMD5Checksum: "remote-md5",
+			LocalMD5Checksum:  "d41d8cd98f00b204e9800998ecf8427e",
+			LocalModTime:      now,
+		},
+	}
+
+	action := DetermineSyncAction(
+		"a.txt",
+		&types.LocalFile{Path: "a.txt", MD5Checksum: "d41d8cd98f00b204e9800998ecf8427e", ModTime: now},
+		nil,
+		metadata,
+	)
+
+	if action != types.ActionDeleteLocal {
+		t.Fatalf("expected %v, got %v", types.ActionDeleteLocal, action)
 	}
 }
