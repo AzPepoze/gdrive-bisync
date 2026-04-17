@@ -4,35 +4,37 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 func MoveToTrash(rootPath string, filePath string) error {
-	trashDir := filepath.Join(rootPath, ".trash")
+	dateFolder := time.Now().Format("02-01-2006")
+	trashDir := filepath.Join(rootPath, ".trash", dateFolder)
 
 	if err := os.MkdirAll(trashDir, 0755); err != nil {
 		return fmt.Errorf("failed to create trash directory: %w", err)
 	}
 
 	baseName := filepath.Base(filePath)
-	timestamp := time.Now().Format("20060102-150405")
-	trashName := fmt.Sprintf("%s_%s", timestamp, baseName)
-	trashPath := filepath.Join(trashDir, trashName)
+	trashPath := filepath.Join(trashDir, baseName)
 
-	counter := 1
-	for {
-		if _, err := os.Stat(trashPath); err != nil {
-			if os.IsNotExist(err) {
+	if _, err := os.Stat(trashPath); err == nil {
+		extension := filepath.Ext(baseName)
+		nameWithoutExtension := strings.TrimSuffix(baseName, extension)
+		counter := 2
+		for {
+			trashPath = filepath.Join(trashDir, fmt.Sprintf("%s (%d)%s", nameWithoutExtension, counter, extension))
+			if _, err := os.Stat(trashPath); os.IsNotExist(err) {
 				break
 			}
-			return err
+			counter++
+			if counter > 1000 {
+				return fmt.Errorf("could not find unique trash path for %s", filePath)
+			}
 		}
-
-		trashPath = filepath.Join(trashDir, fmt.Sprintf("%s_%s_%d", timestamp, baseName, counter))
-		counter++
-		if counter > 1000 {
-			return fmt.Errorf("could not find unique trash path for %s", filePath)
-		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
 	if err := os.Rename(filePath, trashPath); err != nil {
