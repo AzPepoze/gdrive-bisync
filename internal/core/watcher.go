@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"gdrive-bisync/internal/api"
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
 	"gdrive-bisync/internal/store"
@@ -16,7 +18,7 @@ import (
 
 func WatchLocalFiles(
 	localPath string,
-	driveService driveClient,
+	driveService api.DriveClient,
 	sharedState *SharedState,
 	cfg *config.Config,
 	dbStore *store.Store,
@@ -115,7 +117,7 @@ func handleWatchEvent(
 	event fsnotify.Event,
 	localRoot string,
 	relativePath string,
-	driveService driveClient,
+	driveService api.DriveClient,
 	sharedState *SharedState,
 	cfg *config.Config,
 	dbStore *store.Store,
@@ -148,65 +150,36 @@ func handleWatchEvent(
 		}
 
 		logger.Info("Uploading", "path", relativePath)
-		parentPath := filepath.Dir(relativePath)
-		parentFolderID := cfg.RemoteFolderID
-
-		if parentPath != "." {
-			var parentExists bool
-			sharedState.ReadRemoteFiles(func(remoteFiles types.DriveFileMap, _ map[string]*types.FileMetadata) {
-				if parent, ok := remoteFiles[parentPath]; ok {
-					if !parent.IsDirectory {
-						return
-					}
-					parentFolderID = parent.ID
-					parentExists = true
-				}
-			})
-			if !parentExists {
-				logger.Info("Deferring upload until sync cycle because remote parent folder is unavailable", "path", relativePath, "parent", parentPath)
-				return
-			}
+		parentFolderID, ok := resolveParentFolderIDFromSharedState(relativePath, sharedState, cfg.RemoteFolderID)
+		if !ok {
+			logger.Info("Deferring upload until sync cycle because remote parent folder is unavailable", "path", relativePath, "parent", filepath.Dir(relativePath))
+			return
 		}
 
-		remoteInfo := struct {
-			Name     string
-			FolderID string
-			FileID   string
-		}{
-			Name:     filepath.Base(relativePath),
-			FolderID: parentFolderID,
+		request := api.UploadFileRequest{
+			LocalPath:  localFilePath,
+			RemotePath: relativePath,
+			Name:       filepath.Base(relativePath),
+			FolderID:   parentFolderID,
 		}
 		if remoteFile != nil {
-			remoteInfo.FileID = remoteFile.ID
+			request.FileID = remoteFile.ID
 		}
 
-		uploadedFile, err := driveService.UploadOrUpdateFile(localFilePath, remoteInfo)
+		uploadedFile, err := driveService.UploadOrUpdateFile(context.Background(), request)
 		if err != nil {
 			logger.Error("Upload failed", "path", relativePath, "error", err)
 			return
 		}
 
-		newDriveFile := &types.DriveFile{
-			ID:           uploadedFile.Id,
-			Name:         uploadedFile.Name,
-			Path:         relativePath,
-			ModifiedTime: time.Now(),
-			MD5Checksum:  uploadedFile.Md5Checksum,
-			IsDirectory:  false,
-		}
-
 		sharedState.WriteRemoteFiles(func(remoteFiles types.DriveFileMap, metadata map[string]*types.FileMetadata) string {
-			remoteFiles[relativePath] = newDriveFile
-			if existing, exists := metadata[relativePath]; exists {
-				existing.RemoteMD5Checksum = uploadedFile.Md5Checksum
-			} else {
-				metadata[relativePath] = &types.FileMetadata{RemoteMD5Checksum: uploadedFile.Md5Checksum}
-			}
+			remoteFiles[relativePath] = uploadedFile
+			upsertRemoteMetadata(metadata, relativePath, uploadedFile.MD5Checksum)
 			return ""
 		})
 
 		if dbStore != nil {
-			changedRemote := types.DriveFileMap{relativePath: newDriveFile}
+			changedRemote := types.DriveFileMap{relativePath: uploadedFile}
 			if err := dbStore.SaveRemoteFiles(changedRemote, nil); err != nil {
 				logger.Error("Failed to persist remote file to store", "path", relativePath, "error", err)
 			}

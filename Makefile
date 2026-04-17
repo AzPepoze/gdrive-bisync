@@ -3,8 +3,9 @@ DIST_DIR := dist
 RELEASE_DIR := release
 LOG_DIR := logs
 CONFIG_EXAMPLE := config/config.example.json
+GO_CACHE_DIR ?= /tmp/gocache
 
-.PHONY: all clean linux windows release build dev test
+.PHONY: all clean linux windows release build dev test vet
 
 all: release
 
@@ -14,7 +15,11 @@ dev:
 
 test:
 	@echo "Running tests..."
-	go test ./...
+	GOCACHE=$(GO_CACHE_DIR) go test ./...
+
+vet:
+	@echo "Running go vet..."
+	GOCACHE=$(GO_CACHE_DIR) go vet ./...
 
 linux:
 	@echo "Building for Linux (amd64)..."

@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"gdrive-bisync/internal/api"
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
 	"gdrive-bisync/internal/types"
@@ -18,7 +19,7 @@ import (
 )
 
 type Executor struct {
-	driveService driveClient
+	driveService api.DriveClient
 	remoteFiles  types.DriveFileMap
 	metadata     map[string]*types.FileMetadata
 	cfg          *config.Config
@@ -27,7 +28,7 @@ type Executor struct {
 }
 
 func NewExecutor(
-	driveService driveClient,
+	driveService api.DriveClient,
 	remoteFiles types.DriveFileMap,
 	metadata map[string]*types.FileMetadata,
 	cfg *config.Config,
@@ -104,14 +105,13 @@ func (executor *Executor) downloadWithRetry(ctx context.Context, task types.Sync
 		}
 
 		logger.Info("Downloading file from Google Drive", "path", task.FilePath, "attempt", attempt)
-		err := executor.driveService.DownloadFile(remoteFile.ID, localFilePath)
+		err := executor.driveService.DownloadFile(ctx, api.DownloadFileRequest{
+			FileID:          remoteFile.ID,
+			DestinationPath: localFilePath,
+		})
 		if err == nil {
 			executor.metaMu.Lock()
-			if existing, exists := executor.metadata[task.FilePath]; exists {
-				existing.RemoteMD5Checksum = remoteFile.MD5Checksum
-			} else {
-				executor.metadata[task.FilePath] = &types.FileMetadata{RemoteMD5Checksum: remoteFile.MD5Checksum}
-			}
+			upsertRemoteMetadata(executor.metadata, task.FilePath, remoteFile.MD5Checksum)
 			executor.metaMu.Unlock()
 			return nil
 		}
@@ -130,27 +130,20 @@ func (executor *Executor) uploadWithRetry(ctx context.Context, task types.SyncTa
 	localFilePath := filepath.Join(executor.localPath, task.FilePath)
 	remoteFile := executor.remoteFiles[task.FilePath]
 
-	parentPath := filepath.Dir(task.FilePath)
-	parentFolderID := executor.cfg.RemoteFolderID
-	if parentPath != "." {
-		if parent, ok := executor.remoteFiles[parentPath]; ok {
-			parentFolderID = parent.ID
-		} else {
-			logger.Error("Could not find remote parent folder", "path", task.FilePath)
-			return nil
-		}
+	parentFolderID, ok := resolveRemoteParentFolderID(task.FilePath, executor.remoteFiles, executor.cfg.RemoteFolderID)
+	if !ok {
+		logger.Error("Could not find remote parent folder", "path", task.FilePath)
+		return nil
 	}
 
-	remoteInfo := struct {
-		Name     string
-		FolderID string
-		FileID   string
-	}{
-		Name:     filepath.Base(task.FilePath),
-		FolderID: parentFolderID,
+	request := api.UploadFileRequest{
+		LocalPath:  localFilePath,
+		RemotePath: task.FilePath,
+		Name:       filepath.Base(task.FilePath),
+		FolderID:   parentFolderID,
 	}
 	if remoteFile != nil {
-		remoteInfo.FileID = remoteFile.ID
+		request.FileID = remoteFile.ID
 	}
 
 	var lastErr error
@@ -162,24 +155,11 @@ func (executor *Executor) uploadWithRetry(ctx context.Context, task types.SyncTa
 		}
 
 		logger.Info("Uploading file to Google Drive", "path", task.FilePath, "attempt", attempt)
-		uploadedFile, err := executor.driveService.UploadOrUpdateFile(localFilePath, remoteInfo)
+		uploadedFile, err := executor.driveService.UploadOrUpdateFile(ctx, request)
 		if err == nil {
-			modTime, _ := time.Parse(time.RFC3339, uploadedFile.ModifiedTime)
-			newDriveFile := &types.DriveFile{
-				ID:           uploadedFile.Id,
-				Name:         uploadedFile.Name,
-				Path:         task.FilePath,
-				ModifiedTime: modTime,
-				MD5Checksum:  uploadedFile.Md5Checksum,
-				IsDirectory:  false,
-			}
 			executor.metaMu.Lock()
-			executor.remoteFiles[task.FilePath] = newDriveFile
-			if existing, exists := executor.metadata[task.FilePath]; exists {
-				existing.RemoteMD5Checksum = uploadedFile.Md5Checksum
-			} else {
-				executor.metadata[task.FilePath] = &types.FileMetadata{RemoteMD5Checksum: uploadedFile.Md5Checksum}
-			}
+			executor.remoteFiles[task.FilePath] = uploadedFile
+			upsertRemoteMetadata(executor.metadata, task.FilePath, uploadedFile.MD5Checksum)
 			executor.metaMu.Unlock()
 			return nil
 		}
@@ -216,7 +196,7 @@ func (executor *Executor) handleDeleteRemote(task types.SyncTask, index, total i
 	remoteFile := executor.remoteFiles[task.FilePath]
 
 	if remoteFile != nil && remoteFile.ID != "" {
-		if err := executor.driveService.TrashRemoteFile(remoteFile.ID); err != nil {
+		if err := executor.driveService.TrashRemoteFile(context.Background(), remoteFile.ID); err != nil {
 			logger.Error("Failed to trash remote file", "path", task.FilePath, "error", err)
 			return
 		}

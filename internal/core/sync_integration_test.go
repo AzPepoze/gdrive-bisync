@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 
 	"google.golang.org/api/drive/v3"
 
+	"gdrive-bisync/internal/api"
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/scanner"
 	"gdrive-bisync/internal/types"
@@ -35,18 +37,14 @@ type fakeCreateFolderCall struct {
 
 type fakeUploadCall struct {
 	localPath string
-	remoteInfo struct {
-		Name     string
-		FolderID string
-		FileID   string
-	}
+	request   api.UploadFileRequest
 }
 
-func (f *fakeDriveService) GetStartPageToken() (string, error) {
+func (f *fakeDriveService) GetStartPageToken(context.Context) (string, error) {
 	return f.startPageToken, nil
 }
 
-func (f *fakeDriveService) ListFilesRecursive(_ string, _ []*regexp.Regexp, _ func(path string), _, _ int) (types.DriveFileMap, error) {
+func (f *fakeDriveService) ListFilesRecursive(_ context.Context, _ api.ListFilesRequest) (types.DriveFileMap, error) {
 	cloned := make(types.DriveFileMap, len(f.fullScanFiles))
 	for path, file := range f.fullScanFiles {
 		copyFile := *file
@@ -55,20 +53,16 @@ func (f *fakeDriveService) ListFilesRecursive(_ string, _ []*regexp.Regexp, _ fu
 	return cloned, nil
 }
 
-func (f *fakeDriveService) FetchChanges(_ string) ([]*drive.Change, string, error) {
-	return f.changes, f.newPageToken, nil
+func (f *fakeDriveService) FetchChanges(_ context.Context, _ api.FetchChangesRequest) (*api.FetchChangesResult, error) {
+	return &api.FetchChangesResult{Changes: f.changes, NewPageToken: f.newPageToken}, nil
 }
 
-func (f *fakeDriveService) DownloadFile(_, destinationPath string) error {
-	return os.WriteFile(destinationPath, []byte("downloaded"), 0644)
+func (f *fakeDriveService) DownloadFile(_ context.Context, request api.DownloadFileRequest) error {
+	return os.WriteFile(request.DestinationPath, []byte("downloaded"), 0644)
 }
 
-func (f *fakeDriveService) UploadOrUpdateFile(localPath string, remoteInfo struct {
-	Name     string
-	FolderID string
-	FileID   string
-}) (*drive.File, error) {
-	info, err := os.Stat(localPath)
+func (f *fakeDriveService) UploadOrUpdateFile(_ context.Context, request api.UploadFileRequest) (*types.DriveFile, error) {
+	info, err := os.Stat(request.LocalPath)
 	if err != nil {
 		return nil, err
 	}
@@ -76,36 +70,43 @@ func (f *fakeDriveService) UploadOrUpdateFile(localPath string, remoteInfo struc
 		return nil, os.ErrInvalid
 	}
 
-	md5Checksum, err := scanner.GetFileMD5(localPath)
+	md5Checksum, err := scanner.GetFileMD5(request.LocalPath)
 	if err != nil {
 		return nil, err
 	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.uploadCalls = append(f.uploadCalls, fakeUploadCall{localPath: localPath, remoteInfo: remoteInfo})
+	f.uploadCalls = append(f.uploadCalls, fakeUploadCall{localPath: request.LocalPath, request: request})
 
-	id := remoteInfo.FileID
+	id := request.FileID
 	if id == "" {
-		id = "upload-" + remoteInfo.Name
+		id = "upload-" + request.Name
 	}
 
-	return &drive.File{
-		Id:           id,
-		Name:         remoteInfo.Name,
-		ModifiedTime: time.Now().Format(time.RFC3339),
-		Md5Checksum:  md5Checksum,
+	return &types.DriveFile{
+		ID:           id,
+		Name:         request.Name,
+		Path:         request.RemotePath,
+		ModifiedTime: time.Now(),
+		MD5Checksum:  md5Checksum,
 	}, nil
 }
 
-func (f *fakeDriveService) CreateFolder(parentFolderID string, folderName string) (string, error) {
+func (f *fakeDriveService) CreateFolder(_ context.Context, request api.CreateFolderRequest) (*types.DriveFile, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.createCalls = append(f.createCalls, fakeCreateFolderCall{parentID: parentFolderID, name: folderName})
-	return "folder-" + folderName, nil
+	f.createCalls = append(f.createCalls, fakeCreateFolderCall{parentID: request.ParentFolderID, name: request.FolderName})
+	return &types.DriveFile{
+		ID:           "folder-" + request.FolderName,
+		Name:         request.FolderName,
+		Path:         request.RemotePath,
+		ModifiedTime: time.Now(),
+		IsDirectory:  true,
+	}, nil
 }
 
-func (f *fakeDriveService) TrashRemoteFile(fileID string) error {
+func (f *fakeDriveService) TrashRemoteFile(_ context.Context, fileID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.trashCalls = append(f.trashCalls, fileID)

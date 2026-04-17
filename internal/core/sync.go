@@ -1,260 +1,66 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
 	"google.golang.org/api/drive/v3"
 
+	"gdrive-bisync/internal/api"
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
-	"gdrive-bisync/internal/services/scanner"
 	"gdrive-bisync/internal/store"
 	"gdrive-bisync/internal/types"
-	"gdrive-bisync/internal/utils"
 )
 
 func Sync(
-	driveService driveClient,
+	driveService api.DriveClient,
 	remoteFiles types.DriveFileMap,
 	metadata map[string]*types.FileMetadata,
 	cfg *config.Config,
 	pageToken *string,
 	dbStore *store.Store,
 ) error {
-	resolvedLocalPath := utils.ResolvePath(cfg.LocalSyncPath)
-	if resolvedLocalPath == "" || cfg.RemoteFolderID == "" {
-		logger.Error("Error: LOCAL_SYNC_PATH and REMOTE_FOLDER_ID must be configured.")
-		return fmt.Errorf("invalid configuration")
-	}
-
-	if err := os.MkdirAll(resolvedLocalPath, 0755); err != nil {
-		return fmt.Errorf("failed to create local sync path: %w", err)
+	ctx := context.Background()
+	resolvedLocalPath, err := ensureSyncRoot(cfg)
+	if err != nil {
+		return err
 	}
 
 	logger.Info("Starting sync cycle...")
 
-	logger.Info("Scanning local files...")
-	localFiles, err := scanner.GetLocalFilesRecursive(resolvedLocalPath, cfg.IgnoreRegexps, metadata, func(path string) {
-		logger.UpdateStatus(fmt.Sprintf("Scanning local: %s", path))
-	})
+	localFiles, err := scanLocalFiles(resolvedLocalPath, cfg, metadata)
 	if err != nil {
 		return err
 	}
-	logger.UpdateStatus("")
-	logger.Info("Local scan complete.", "files", len(localFiles))
 
-	if len(remoteFiles) == 0 || *pageToken == "" {
-		logger.Info("Performing full remote scan...", "concurrency", cfg.MaxConcurrentScans, "retries", cfg.MaxRetries)
-
-		token, err := driveService.GetStartPageToken()
-		if err != nil {
-			logger.Error("Failed to get start page token", "error", err)
-		} else {
-			*pageToken = token
-		}
-
-		currentRemoteFiles, err := driveService.ListFilesRecursive(
-			cfg.RemoteFolderID,
-			cfg.IgnoreRegexps,
-			func(path string) {
-				logger.UpdateStatus(fmt.Sprintf("Scanning remote: %s", path))
-			},
-			cfg.MaxConcurrentScans,
-			cfg.MaxRetries,
-		)
-		if err != nil {
-			return err
-		}
-		logger.UpdateStatus("")
-		logger.Info("Remote scan complete.", "files", len(currentRemoteFiles))
-
-		for key := range remoteFiles {
-			delete(remoteFiles, key)
-		}
-		for key, value := range currentRemoteFiles {
-			remoteFiles[key] = value
-		}
-
-		if dbStore != nil {
-			if err := dbStore.ReplaceAllRemoteFiles(remoteFiles); err != nil {
-				logger.Error("Failed to persist remote files after full scan", "error", err)
-			}
-		}
-
-	} else {
-		logger.Info("Checking for remote changes...", "token", *pageToken)
-		changes, newToken, err := driveService.FetchChanges(*pageToken)
-		if err != nil {
-			logger.Error("Failed to fetch changes, falling back to full scan", "error", err)
-			*pageToken = ""
-			return err
-		}
-
-		relevantChanges := filterRelevantChanges(changes, remoteFiles)
-		if len(relevantChanges) > 0 {
-			logger.Info(fmt.Sprintf("Processing %d relevant remote changes (of %d total)...", len(relevantChanges), len(changes)))
-			changedByApply, deletedByApply, deletedMetadataByApply := applyChanges(relevantChanges, remoteFiles, metadata, cfg.RemoteFolderID, cfg.IgnoreRegexps)
-			if dbStore != nil {
-				if err := dbStore.SaveRemoteFiles(changedByApply, deletedByApply); err != nil {
-					logger.Error("Failed to persist incremental remote changes", "error", err)
-				}
-				if err := dbStore.SaveMetadata(metadata, deletedMetadataByApply); err != nil {
-					logger.Error("Failed to persist incremental metadata changes", "error", err)
-				}
-			}
-		} else {
-			logger.Info("No remote changes found.")
-		}
-		*pageToken = newToken
+	if err := refreshRemoteState(ctx, driveService, remoteFiles, metadata, cfg, pageToken, dbStore); err != nil {
+		return err
 	}
 
 	changedMetadata := make(map[string]*types.FileMetadata)
 	deletedMetadataPaths := make([]string, 0)
 	createdRemoteFolders := make(map[string]struct{})
 
-	typeConflictDeletedMetadata, err := resolveRemoteTypeConflicts(driveService, localFiles, remoteFiles, metadata)
+	typeConflictDeletedMetadata, err := resolveRemoteTypeConflicts(ctx, driveService, localFiles, remoteFiles, metadata)
 	if err != nil {
 		return err
 	}
 	deletedMetadataPaths = append(deletedMetadataPaths, typeConflictDeletedMetadata...)
 
-	for path, local := range localFiles {
-		if local.IsDirectory {
-			if _, remoteExists := remoteFiles[path]; remoteExists {
-				if _, metaExists := metadata[path]; !metaExists {
-					metadata[path] = &types.FileMetadata{}
-				}
-			}
-		}
+	initializeFolderMetadata(localFiles, remoteFiles, metadata)
+	folderDeletedMetadata, err := reconcileFolders(ctx, driveService, resolvedLocalPath, localFiles, remoteFiles, metadata, cfg, dbStore, changedMetadata, createdRemoteFolders)
+	if err != nil {
+		return err
 	}
+	deletedMetadataPaths = append(deletedMetadataPaths, folderDeletedMetadata...)
 
-	localFolders := make([]*types.LocalFile, 0)
-	for _, file := range localFiles {
-		if file.IsDirectory {
-			localFolders = append(localFolders, file)
-		}
-	}
-	sort.Slice(localFolders, func(i, j int) bool {
-		return strings.Count(localFolders[i].Path, string(os.PathSeparator)) < strings.Count(localFolders[j].Path, string(os.PathSeparator))
-	})
-
-	for _, folder := range localFolders {
-		if _, exists := remoteFiles[folder.Path]; !exists {
-			if _, inMetadata := metadata[folder.Path]; inMetadata {
-				childPrefix := folder.Path + string(os.PathSeparator)
-				childrenStillInRemote := false
-				for remotePath := range remoteFiles {
-					if strings.HasPrefix(remotePath, childPrefix) {
-						childrenStillInRemote = true
-						break
-					}
-				}
-				if childrenStillInRemote {
-					logger.Warn("Folder missing from remote map but children still present, skipping deletion", "path", folder.Path)
-					continue
-				}
-
-				logger.Info("Folder deleted remotely. Moving to trash.", "path", folder.Path)
-				fullPath := filepath.Join(resolvedLocalPath, folder.Path)
-				if err := utils.MoveToTrash(resolvedLocalPath, fullPath); err != nil {
-					logger.Error("Failed to move local folder to trash", "path", folder.Path, "error", err)
-				} else {
-					delete(metadata, folder.Path)
-					deletedMetadataPaths = append(deletedMetadataPaths, folder.Path)
-					for key := range metadata {
-						if strings.HasPrefix(key, childPrefix) {
-							delete(metadata, key)
-							deletedMetadataPaths = append(deletedMetadataPaths, key)
-						}
-					}
-				}
-				continue
-			}
-
-			parentPath := filepath.Dir(folder.Path)
-			parentFolderID := cfg.RemoteFolderID
-			if parentPath != "." {
-				if parent, ok := remoteFiles[parentPath]; ok {
-					parentFolderID = parent.ID
-				} else {
-					logger.Warn("Skipping folder creation, parent not found", "folder", folder.Path)
-					continue
-				}
-			}
-
-			logger.Info("Creating remote folder", "path", folder.Path)
-			id, err := driveService.CreateFolder(parentFolderID, filepath.Base(folder.Path))
-			if err != nil {
-				logger.Error("Failed to create remote folder", "path", folder.Path, "error", err)
-				continue
-			}
-
-			newDriveFile := &types.DriveFile{
-				ID:           id,
-				Name:         filepath.Base(folder.Path),
-				Path:         folder.Path,
-				ModifiedTime: time.Now(),
-				IsDirectory:  true,
-			}
-			remoteFiles[folder.Path] = newDriveFile
-			if dbStore != nil {
-				if err := dbStore.SaveRemoteFiles(types.DriveFileMap{folder.Path: newDriveFile}, nil); err != nil {
-					logger.Error("Failed to persist new remote folder", "path", folder.Path, "error", err)
-				}
-			}
-			metadata[folder.Path] = &types.FileMetadata{}
-			changedMetadata[folder.Path] = metadata[folder.Path]
-			createdRemoteFolders[folder.Path] = struct{}{}
-		}
-	}
-
-	allPaths := make(map[string]struct{})
-	for key := range localFiles {
-		allPaths[key] = struct{}{}
-	}
-	for key := range remoteFiles {
-		allPaths[key] = struct{}{}
-	}
-
-	var tasks []types.SyncTask
-
-	for pathStr := range allPaths {
-		local := localFiles[pathStr]
-		remote := remoteFiles[pathStr]
-
-		ignored := false
-		for _, re := range cfg.IgnoreRegexps {
-			if re.MatchString(pathStr) {
-				ignored = true
-				break
-			}
-		}
-		if ignored {
-			continue
-		}
-
-		isDir := (local != nil && local.IsDirectory) || (remote != nil && remote.IsDirectory)
-
-		if isDir {
-			if local == nil && remote != nil {
-				if shouldDeleteRemoteDirectory(pathStr, localFiles, metadata) {
-					tasks = append(tasks, types.SyncTask{Action: types.ActionDeleteRemote, FilePath: pathStr})
-				}
-			}
-			continue
-		}
-
-		action := determineTaskAction(pathStr, local, remote, metadata, createdRemoteFolders)
-		if action != types.ActionSkipNoChange && action != types.ActionSkipIdentical {
-			tasks = append(tasks, types.SyncTask{Action: action, FilePath: pathStr})
-		}
-	}
+	tasks := planSyncTasks(localFiles, remoteFiles, metadata, cfg.IgnoreRegexps, createdRemoteFolders)
 
 	executor := NewExecutor(driveService, remoteFiles, metadata, cfg, resolvedLocalPath)
 	if err := executor.ExecuteTasks(tasks); err != nil {
@@ -279,7 +85,8 @@ func Sync(
 }
 
 func resolveRemoteTypeConflicts(
-	driveService driveClient,
+	ctx context.Context,
+	driveService api.DriveClient,
 	localFiles types.LocalFileMap,
 	remoteFiles types.DriveFileMap,
 	metadata map[string]*types.FileMetadata,
@@ -299,7 +106,7 @@ func resolveRemoteTypeConflicts(
 		}
 
 		if remote.ID != "" {
-			if err := driveService.TrashRemoteFile(remote.ID); err != nil {
+			if err := driveService.TrashRemoteFile(ctx, remote.ID); err != nil {
 				return deletedMetadataPaths, fmt.Errorf("failed to reconcile path type change for %s: %w", path, err)
 			}
 		}
