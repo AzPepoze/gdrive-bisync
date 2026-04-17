@@ -11,7 +11,6 @@ import (
 
 	"google.golang.org/api/drive/v3"
 
-	"gdrive-bisync/internal/api"
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
 	"gdrive-bisync/internal/services/scanner"
@@ -21,7 +20,7 @@ import (
 )
 
 func Sync(
-	driveService *api.DriveService,
+	driveService driveClient,
 	remoteFiles types.DriveFileMap,
 	metadata map[string]*types.FileMetadata,
 	cfg *config.Config,
@@ -117,6 +116,13 @@ func Sync(
 
 	changedMetadata := make(map[string]*types.FileMetadata)
 	deletedMetadataPaths := make([]string, 0)
+	createdRemoteFolders := make(map[string]struct{})
+
+	typeConflictDeletedMetadata, err := resolveRemoteTypeConflicts(driveService, localFiles, remoteFiles, metadata)
+	if err != nil {
+		return err
+	}
+	deletedMetadataPaths = append(deletedMetadataPaths, typeConflictDeletedMetadata...)
 
 	for path, local := range localFiles {
 		if local.IsDirectory {
@@ -204,6 +210,7 @@ func Sync(
 			}
 			metadata[folder.Path] = &types.FileMetadata{}
 			changedMetadata[folder.Path] = metadata[folder.Path]
+			createdRemoteFolders[folder.Path] = struct{}{}
 		}
 	}
 
@@ -236,14 +243,14 @@ func Sync(
 
 		if isDir {
 			if local == nil && remote != nil {
-				if _, inMetadata := metadata[pathStr]; inMetadata {
+				if shouldDeleteRemoteDirectory(pathStr, localFiles, metadata) {
 					tasks = append(tasks, types.SyncTask{Action: types.ActionDeleteRemote, FilePath: pathStr})
 				}
 			}
 			continue
 		}
 
-		action := DetermineSyncAction(pathStr, local, remote, metadata)
+		action := determineTaskAction(pathStr, local, remote, metadata, createdRemoteFolders)
 		if action != types.ActionSkipNoChange && action != types.ActionSkipIdentical {
 			tasks = append(tasks, types.SyncTask{Action: action, FilePath: pathStr})
 		}
@@ -269,6 +276,120 @@ func Sync(
 	logger.Info("Sync cycle finished.")
 	logger.Info("--------------------------------------------------")
 	return nil
+}
+
+func resolveRemoteTypeConflicts(
+	driveService driveClient,
+	localFiles types.LocalFileMap,
+	remoteFiles types.DriveFileMap,
+	metadata map[string]*types.FileMetadata,
+) ([]string, error) {
+	deletedMetadataPaths := make([]string, 0)
+
+	for path, local := range localFiles {
+		remote := remoteFiles[path]
+		if local == nil || remote == nil || local.IsDirectory == remote.IsDirectory {
+			continue
+		}
+
+		if local.IsDirectory {
+			logger.Warn("Replacing remote file with local folder", "path", path)
+		} else {
+			logger.Warn("Replacing remote folder with local file", "path", path)
+		}
+
+		if remote.ID != "" {
+			if err := driveService.TrashRemoteFile(remote.ID); err != nil {
+				return deletedMetadataPaths, fmt.Errorf("failed to reconcile path type change for %s: %w", path, err)
+			}
+		}
+
+		deletedMetadataPaths = append(deletedMetadataPaths, removeRemotePathAndMetadata(remoteFiles, metadata, path)...)
+	}
+
+	return deletedMetadataPaths, nil
+}
+
+func removeRemotePathAndMetadata(
+	remoteFiles types.DriveFileMap,
+	metadata map[string]*types.FileMetadata,
+	path string,
+) []string {
+	deletedMetadataPaths := make([]string, 0)
+	remote, exists := remoteFiles[path]
+	if !exists {
+		return deletedMetadataPaths
+	}
+
+	delete(remoteFiles, path)
+	if _, ok := metadata[path]; ok {
+		delete(metadata, path)
+		deletedMetadataPaths = append(deletedMetadataPaths, path)
+	}
+
+	if remote.IsDirectory {
+		childPrefix := path + string(os.PathSeparator)
+		for childPath := range remoteFiles {
+			if strings.HasPrefix(childPath, childPrefix) {
+				delete(remoteFiles, childPath)
+			}
+		}
+		for childPath := range metadata {
+			if strings.HasPrefix(childPath, childPrefix) {
+				delete(metadata, childPath)
+				deletedMetadataPaths = append(deletedMetadataPaths, childPath)
+			}
+		}
+	}
+
+	return deletedMetadataPaths
+}
+
+func determineTaskAction(
+	filePath string,
+	localFile *types.LocalFile,
+	remoteFile *types.DriveFile,
+	metadata map[string]*types.FileMetadata,
+	createdRemoteFolders map[string]struct{},
+) types.SyncAction {
+	action := DetermineSyncAction(filePath, localFile, remoteFile, metadata)
+	if action == types.ActionDeleteLocal && localFile != nil && remoteFile == nil && hasAncestorInSet(filePath, createdRemoteFolders) {
+		return types.ActionUploadNew
+	}
+	return action
+}
+
+func hasAncestorInSet(path string, folders map[string]struct{}) bool {
+	for parent := filepath.Dir(path); parent != "." && parent != string(os.PathSeparator); parent = filepath.Dir(parent) {
+		if _, ok := folders[parent]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldDeleteRemoteDirectory(
+	path string,
+	localFiles types.LocalFileMap,
+	metadata map[string]*types.FileMetadata,
+) bool {
+	if _, ok := metadata[path]; ok {
+		return true
+	}
+
+	childPrefix := path + string(os.PathSeparator)
+	for localPath := range localFiles {
+		if strings.HasPrefix(localPath, childPrefix) {
+			return false
+		}
+	}
+	for metadataPath := range metadata {
+		if strings.HasPrefix(metadataPath, childPrefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func filterRelevantChanges(changes []*drive.Change, remoteFiles types.DriveFileMap) []*drive.Change {

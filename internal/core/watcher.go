@@ -8,7 +8,6 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"gdrive-bisync/internal/api"
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
 	"gdrive-bisync/internal/store"
@@ -17,7 +16,7 @@ import (
 
 func WatchLocalFiles(
 	localPath string,
-	driveService *api.DriveService,
+	driveService driveClient,
 	sharedState *SharedState,
 	cfg *config.Config,
 	dbStore *store.Store,
@@ -116,7 +115,7 @@ func handleWatchEvent(
 	event fsnotify.Event,
 	localRoot string,
 	relativePath string,
-	driveService *api.DriveService,
+	driveService driveClient,
 	sharedState *SharedState,
 	cfg *config.Config,
 	dbStore *store.Store,
@@ -130,6 +129,10 @@ func handleWatchEvent(
 		if err != nil {
 			return
 		}
+		if info.IsDir() {
+			logger.Info("Deferring directory reconciliation to sync cycle", "path", relativePath, "op", event.Op.String())
+			return
+		}
 		if info.Size() == 0 {
 			logger.Warn("Skipping 0-byte file", "path", relativePath)
 			return
@@ -139,6 +142,10 @@ func handleWatchEvent(
 		sharedState.ReadRemoteFiles(func(remoteFiles types.DriveFileMap, _ map[string]*types.FileMetadata) {
 			remoteFile = remoteFiles[relativePath]
 		})
+		if remoteFile != nil && remoteFile.IsDirectory {
+			logger.Info("Deferring file/directory replacement to sync cycle", "path", relativePath)
+			return
+		}
 
 		logger.Info("Uploading", "path", relativePath)
 		parentPath := filepath.Dir(relativePath)
@@ -148,12 +155,15 @@ func handleWatchEvent(
 			var parentExists bool
 			sharedState.ReadRemoteFiles(func(remoteFiles types.DriveFileMap, _ map[string]*types.FileMetadata) {
 				if parent, ok := remoteFiles[parentPath]; ok {
+					if !parent.IsDirectory {
+						return
+					}
 					parentFolderID = parent.ID
 					parentExists = true
 				}
 			})
 			if !parentExists {
-				logger.Error("Could not find remote parent folder", "path", relativePath)
+				logger.Info("Deferring upload until sync cycle because remote parent folder is unavailable", "path", relativePath, "parent", parentPath)
 				return
 			}
 		}

@@ -11,7 +11,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"gdrive-bisync/internal/api"
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
 	"gdrive-bisync/internal/types"
@@ -19,7 +18,7 @@ import (
 )
 
 type Executor struct {
-	driveService *api.DriveService
+	driveService driveClient
 	remoteFiles  types.DriveFileMap
 	metadata     map[string]*types.FileMetadata
 	cfg          *config.Config
@@ -28,7 +27,7 @@ type Executor struct {
 }
 
 func NewExecutor(
-	driveService *api.DriveService,
+	driveService driveClient,
 	remoteFiles types.DriveFileMap,
 	metadata map[string]*types.FileMetadata,
 	cfg *config.Config,

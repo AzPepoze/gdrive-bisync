@@ -4,13 +4,17 @@ RELEASE_DIR := release
 LOG_DIR := logs
 CONFIG_EXAMPLE := config/config.example.json
 
-.PHONY: all clean linux windows release build dev
+.PHONY: all clean linux windows release build dev test
 
 all: release
 
 dev:
 	@echo "Starting development server..."
 	go run cmd/gdrive-bisync/main.go $(ARGS)
+
+test:
+	@echo "Running tests..."
+	go test ./...
 
 linux:
 	@echo "Building for Linux (amd64)..."
