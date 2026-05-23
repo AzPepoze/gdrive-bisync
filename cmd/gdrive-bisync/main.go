@@ -141,7 +141,7 @@ func main() {
 	runSync := func() {
 		token := sharedState.GetPageToken()
 		sharedState.RunExclusive(func(remoteFilesMap types.DriveFileMap, metadataMap map[string]*types.FileMetadata) {
-			if err := core.Sync(driveService, remoteFilesMap, metadataMap, cfg, &token, dbStore); err != nil {
+			if err := core.Sync(driveService, remoteFilesMap, metadataMap, cfg, &token, dbStore, sharedState); err != nil {
 				logger.Error("Sync failed", "error", err)
 			}
 		})

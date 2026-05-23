@@ -2,22 +2,27 @@ package core
 
 import (
 	"sync"
+	"time"
 
 	"gdrive-bisync/internal/types"
 )
 
 type SharedState struct {
-	mutex       sync.RWMutex
-	remoteFiles types.DriveFileMap
-	metadata    map[string]*types.FileMetadata
-	pageToken   string
+	mutex              sync.RWMutex
+	remoteFiles        types.DriveFileMap
+	metadata           map[string]*types.FileMetadata
+	pageToken          string
+	activeDownloads    map[string]time.Time
+	completedDownloads map[string]time.Time
 }
 
 func NewSharedState(remoteFiles types.DriveFileMap, metadata map[string]*types.FileMetadata, pageToken string) *SharedState {
 	return &SharedState{
-		remoteFiles: remoteFiles,
-		metadata:    metadata,
-		pageToken:   pageToken,
+		remoteFiles:        remoteFiles,
+		metadata:           metadata,
+		pageToken:          pageToken,
+		activeDownloads:    make(map[string]time.Time),
+		completedDownloads: make(map[string]time.Time),
 	}
 }
 
@@ -62,4 +67,29 @@ func (sharedState *SharedState) SnapshotRemoteFiles() types.DriveFileMap {
 		snapshot[path] = driveFile
 	}
 	return snapshot
+}
+
+func (sharedState *SharedState) AddActiveDownload(path string) {
+	sharedState.mutex.Lock()
+	defer sharedState.mutex.Unlock()
+	sharedState.activeDownloads[path] = time.Now()
+}
+
+func (sharedState *SharedState) RemoveActiveDownload(path string) {
+	sharedState.mutex.Lock()
+	defer sharedState.mutex.Unlock()
+	delete(sharedState.activeDownloads, path)
+	sharedState.completedDownloads[path] = time.Now()
+}
+
+func (sharedState *SharedState) IsActiveDownload(path string) bool {
+	sharedState.mutex.RLock()
+	defer sharedState.mutex.RUnlock()
+	if _, active := sharedState.activeDownloads[path]; active {
+		return true
+	}
+	if t, completed := sharedState.completedDownloads[path]; completed {
+		return time.Since(t) < 5*time.Second
+	}
+	return false
 }

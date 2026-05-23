@@ -25,6 +25,7 @@ func Sync(
 	cfg *config.Config,
 	pageToken *string,
 	dbStore *store.Store,
+	sharedState *SharedState,
 ) error {
 	ctx := context.Background()
 	resolvedLocalPath, err := ensureSyncRoot(cfg)
@@ -62,7 +63,7 @@ func Sync(
 
 	tasks := planSyncTasks(localFiles, remoteFiles, metadata, cfg.IgnoreRegexps, createdRemoteFolders)
 
-	executor := NewExecutor(driveService, remoteFiles, metadata, cfg, resolvedLocalPath)
+	executor := NewExecutor(driveService, remoteFiles, metadata, cfg, resolvedLocalPath, sharedState)
 	if err := executor.ExecuteTasks(tasks); err != nil {
 		logger.Error("Sync tasks execution failed", "error", err)
 	}

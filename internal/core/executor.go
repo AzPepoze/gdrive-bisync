@@ -25,6 +25,7 @@ type Executor struct {
 	cfg          *config.Config
 	metaMu       sync.Mutex
 	localPath    string
+	sharedState  *SharedState
 }
 
 func NewExecutor(
@@ -33,6 +34,7 @@ func NewExecutor(
 	metadata map[string]*types.FileMetadata,
 	cfg *config.Config,
 	localPath string,
+	sharedState *SharedState,
 ) *Executor {
 	return &Executor{
 		driveService: driveService,
@@ -40,6 +42,7 @@ func NewExecutor(
 		metadata:     metadata,
 		cfg:          cfg,
 		localPath:    localPath,
+		sharedState:  sharedState,
 	}
 }
 
@@ -83,6 +86,11 @@ func (executor *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 func (executor *Executor) downloadWithRetry(ctx context.Context, task types.SyncTask, index, total int) error {
 	localFilePath := filepath.Join(executor.localPath, task.FilePath)
 	remoteFile := executor.remoteFiles[task.FilePath]
+
+	if executor.sharedState != nil {
+		executor.sharedState.AddActiveDownload(task.FilePath)
+		defer executor.sharedState.RemoveActiveDownload(task.FilePath)
+	}
 
 	logger.Info(fmt.Sprintf("[%d/%d] %s: %s", index, total, task.Action.String(), task.FilePath))
 

@@ -82,6 +82,10 @@ func WatchLocalFiles(
 				continue
 			}
 
+			if sharedState != nil && sharedState.IsActiveDownload(relativePath) {
+				continue
+			}
+
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				info, err := os.Stat(event.Name)
 				if err == nil && info.IsDir() {
