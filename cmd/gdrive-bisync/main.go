@@ -105,6 +105,13 @@ func main() {
 		logger.Error("Failed to initialize runtime directory", "error", err)
 		os.Exit(1)
 	}
+	if shouldOpenTUI(pflag.NFlag(), stdoutIsTerminal()) || *tuiFlag {
+		if err := tui.RunTerminal(runtimePaths, resolvedLocalPath); err != nil {
+			logger.Error("TUI failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if *statusFlag {
 		status, err := appstate.ReadStatus(runtimePaths.StatusFile)
 		if err != nil {
@@ -144,14 +151,6 @@ func main() {
 		fmt.Printf("restored %s\n", entry.OriginalPath)
 		return
 	}
-	if *tuiFlag {
-		if err := tui.RunTerminal(runtimePaths, resolvedLocalPath); err != nil {
-			logger.Error("TUI failed", "error", err)
-			os.Exit(1)
-		}
-		return
-	}
-
 	instanceLock, err := appstate.AcquireInstanceLock(runtimePaths.LockFile)
 	if err != nil {
 		logger.Error("Another gdrive-bisync process is already running", "error", err)
@@ -324,4 +323,13 @@ func main() {
 	<-sigs
 	writeStatus(func(status *appstate.Status) { status.State = "stopped" })
 	logger.Info("Shutting down...")
+}
+
+func stdoutIsTerminal() bool {
+	info, err := os.Stdout.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func shouldOpenTUI(explicitFlagCount int, terminal bool) bool {
+	return explicitFlagCount == 0 && terminal
 }

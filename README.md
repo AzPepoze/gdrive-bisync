@@ -65,6 +65,8 @@ Building from source requires Go 1.25 or newer.
 
 ## CLI reference
 
+Running `gdrive-bisync` in an interactive terminal opens the Bubble Tea manager automatically. The same command remains a background sync daemon when launched without a terminal, including through systemd.
+
 ### Sync and authentication
 
 | Option | Short | Purpose | Changes data? |
