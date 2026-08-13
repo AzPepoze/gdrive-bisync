@@ -187,6 +187,65 @@ func (store *Store) SavePageToken(token string) error {
 	})
 }
 
+func (store *Store) ReplaceSyncState(remoteFiles types.DriveFileMap, metadata map[string]*types.FileMetadata, pageToken string) error {
+	return store.database.Update(func(transaction *bbolt.Tx) error {
+		remoteBucket := transaction.Bucket(bucketRemoteFiles)
+		metadataBucket := transaction.Bucket(bucketMetadata)
+		if err := clearBucket(remoteBucket); err != nil {
+			return err
+		}
+		if err := clearBucket(metadataBucket); err != nil {
+			return err
+		}
+		for path, driveFile := range remoteFiles {
+			encoded, err := json.Marshal(driveFile)
+			if err != nil {
+				return err
+			}
+			if err := remoteBucket.Put([]byte(path), encoded); err != nil {
+				return err
+			}
+		}
+		for path, fileMetadata := range metadata {
+			encoded, err := json.Marshal(fileMetadata)
+			if err != nil {
+				return err
+			}
+			if err := metadataBucket.Put([]byte(path), encoded); err != nil {
+				return err
+			}
+		}
+		return transaction.Bucket(bucketConfig).Put(keyPageToken, []byte(pageToken))
+	})
+}
+
+func (store *Store) SaveFileState(path string, driveFile *types.DriveFile, metadata *types.FileMetadata) error {
+	return store.database.Update(func(transaction *bbolt.Tx) error {
+		encodedFile, err := json.Marshal(driveFile)
+		if err != nil {
+			return err
+		}
+		encodedMetadata, err := json.Marshal(metadata)
+		if err != nil {
+			return err
+		}
+		if err := transaction.Bucket(bucketRemoteFiles).Put([]byte(path), encodedFile); err != nil {
+			return err
+		}
+		return transaction.Bucket(bucketMetadata).Put([]byte(path), encodedMetadata)
+	})
+}
+
+func clearBucket(bucket *bbolt.Bucket) error {
+	cursor := bucket.Cursor()
+	for key, _ := cursor.First(); key != nil; key, _ = cursor.Next() {
+		if err := cursor.Delete(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (store *Store) LoadPageToken() (string, error) {
 	var token string
 	err := store.database.View(func(transaction *bbolt.Tx) error {

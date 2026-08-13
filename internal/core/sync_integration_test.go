@@ -28,6 +28,8 @@ type fakeDriveService struct {
 	createCalls []fakeCreateFolderCall
 	uploadCalls []fakeUploadCall
 	trashCalls  []string
+	uploadErr   error
+	trashErr    error
 }
 
 type fakeCreateFolderCall struct {
@@ -62,6 +64,9 @@ func (f *fakeDriveService) DownloadFile(_ context.Context, request api.DownloadF
 }
 
 func (f *fakeDriveService) UploadOrUpdateFile(_ context.Context, request api.UploadFileRequest) (*types.DriveFile, error) {
+	if f.uploadErr != nil {
+		return nil, f.uploadErr
+	}
 	info, err := os.Stat(request.LocalPath)
 	if err != nil {
 		return nil, err
@@ -107,6 +112,9 @@ func (f *fakeDriveService) CreateFolder(_ context.Context, request api.CreateFol
 }
 
 func (f *fakeDriveService) TrashRemoteFile(_ context.Context, fileID string) error {
+	if f.trashErr != nil {
+		return f.trashErr
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.trashCalls = append(f.trashCalls, fileID)

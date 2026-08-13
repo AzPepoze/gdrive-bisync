@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"gdrive-bisync/internal/types"
 )
 
 func TestBackupDatabaseCopiesAndRotates(t *testing.T) {
@@ -23,5 +25,34 @@ func TestBackupDatabaseCopiesAndRotates(t *testing.T) {
 	}
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 backups, got %d", len(entries))
+	}
+}
+
+func TestReplaceSyncStatePersistsOneConsistentSnapshot(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "state.db")
+	database, err := Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	remote := types.DriveFileMap{"a.txt": {ID: "id-a", Path: "a.txt"}}
+	metadata := map[string]*types.FileMetadata{"a.txt": {RemoteMD5Checksum: "hash"}}
+	if err := database.ReplaceSyncState(remote, metadata, "token-a"); err != nil {
+		t.Fatal(err)
+	}
+	loadedRemote, err := database.LoadRemoteFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedMetadata, err := database.LoadMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedToken, err := database.LoadPageToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedRemote["a.txt"].ID != "id-a" || loadedMetadata["a.txt"].RemoteMD5Checksum != "hash" || loadedToken != "token-a" {
+		t.Fatal("sync snapshot was not persisted consistently")
 	}
 }

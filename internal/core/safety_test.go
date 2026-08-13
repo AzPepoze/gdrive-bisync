@@ -13,7 +13,7 @@ func TestValidateDeletionSafetyRejectsCountThreshold(t *testing.T) {
 		{Action: types.ActionDeleteRemote, FilePath: "two"},
 	}
 	cfg := &config.Config{MaxDeletionsPerSync: 1}
-	if err := validateDeletionSafety(tasks, 100, cfg, false); err == nil {
+	if err := validateDeletionSafety(tasks, 100, 100, cfg, false); err == nil {
 		t.Fatal("expected deletion count threshold to reject plan")
 	}
 }
@@ -21,8 +21,16 @@ func TestValidateDeletionSafetyRejectsCountThreshold(t *testing.T) {
 func TestValidateDeletionSafetyAllowsExplicitOverride(t *testing.T) {
 	tasks := []types.SyncTask{{Action: types.ActionDeleteLocal, FilePath: "one"}}
 	cfg := &config.Config{MaxDeletionsPerSync: 0, MaxDeletionPercent: 0.1}
-	if err := validateDeletionSafety(tasks, 1, cfg, true); err != nil {
+	if err := validateDeletionSafety(tasks, 1, 1, cfg, true); err != nil {
 		t.Fatalf("explicit override should allow plan: %v", err)
+	}
+}
+
+func TestValidateDeletionSafetyRejectsRemoteDeletionAgainstEmptyBaseline(t *testing.T) {
+	tasks := []types.SyncTask{{Action: types.ActionDeleteRemote, FilePath: "one"}}
+	cfg := &config.Config{MaxDeletionPercent: 50}
+	if err := validateDeletionSafety(tasks, 0, 0, cfg, false); err == nil {
+		t.Fatal("expected empty remote baseline to reject deletion")
 	}
 }
 
@@ -38,6 +46,15 @@ func TestCollapseLocalDeletionSubtreesKeepsParentAsSingleRestoreUnit(t *testing.
 	}
 	collapsed := collapseLocalDeletionSubtrees(tasks, localFiles)
 	if len(collapsed) != 2 || collapsed[0].FilePath != "folder" || collapsed[1].FilePath != "other.txt" {
+		t.Fatalf("unexpected collapsed tasks: %#v", collapsed)
+	}
+}
+
+func TestCollapseDeletionSubtreesKeepsRemoteParentOnly(t *testing.T) {
+	tasks := []types.SyncTask{{Action: types.ActionDeleteRemote, FilePath: "folder/file.txt"}, {Action: types.ActionDeleteRemote, FilePath: "folder"}}
+	remote := types.DriveFileMap{"folder": {Path: "folder", IsDirectory: true}, "folder/file.txt": {Path: "folder/file.txt"}}
+	collapsed := collapseDeletionSubtrees(tasks, types.LocalFileMap{}, remote)
+	if len(collapsed) != 1 || collapsed[0].FilePath != "folder" {
 		t.Fatalf("unexpected collapsed tasks: %#v", collapsed)
 	}
 }

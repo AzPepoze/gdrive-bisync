@@ -87,9 +87,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := os.MkdirAll(resolvedLocalPath, 0755); err != nil {
-		logger.Error("Failed to create local directory", "error", err)
-		os.Exit(1)
+	if !*dryRunFlag {
+		if err := os.MkdirAll(resolvedLocalPath, 0755); err != nil {
+			logger.Error("Failed to create local directory", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	runtimePaths, err := appstate.DefaultPaths()
@@ -156,11 +158,13 @@ func main() {
 	defer instanceLock.Close()
 
 	dbPath := filepath.Join(resolvedLocalPath, cfg.DBFileName)
-	if backupPath, err := store.BackupDatabase(dbPath, cfg.DatabaseBackupCount); err != nil {
-		logger.Error("Failed to back up database", "error", err)
-		os.Exit(1)
-	} else if backupPath != "" {
-		logger.Info("Database backup created", "path", backupPath)
+	if !*dryRunFlag {
+		if backupPath, err := store.BackupDatabase(dbPath, cfg.DatabaseBackupCount); err != nil {
+			logger.Error("Failed to back up database", "error", err)
+			os.Exit(1)
+		} else if backupPath != "" {
+			logger.Info("Database backup created", "path", backupPath)
+		}
 	}
 
 	if *forceFlag {
@@ -242,21 +246,29 @@ func main() {
 			status.LastError = ""
 		})
 		token := sharedState.GetPageToken()
-		sharedState.RunExclusive(func(remoteFilesMap types.DriveFileMap, metadataMap map[string]*types.FileMetadata) {
-			if err := core.Sync(driveService, remoteFilesMap, metadataMap, cfg, &token, dbStore, sharedState, core.SyncOptions{
-				DryRun:             *dryRunFlag,
-				AllowUnsafeDeletes: *unsafeDeletesFlag,
-				OnPlan: func(taskCount int) {
-					writeStatus(func(status *appstate.Status) { status.TaskCount = taskCount })
-				},
-			}); err != nil {
-				logger.Error("Sync failed", "error", err)
-				writeStatus(func(status *appstate.Status) { status.LastError = err.Error() })
-			}
+		var syncErr error
+		sharedState.RunMutation(func() {
+			sharedState.RunExclusive(func(remoteFilesMap types.DriveFileMap, metadataMap map[string]*types.FileMetadata) {
+				if err := core.Sync(driveService, remoteFilesMap, metadataMap, cfg, &token, dbStore, sharedState, core.SyncOptions{
+					DryRun:             *dryRunFlag,
+					AllowUnsafeDeletes: *unsafeDeletesFlag,
+					OnPlan: func(taskCount int) {
+						writeStatus(func(status *appstate.Status) { status.TaskCount = taskCount })
+					},
+				}); err != nil {
+					syncErr = err
+					logger.Error("Sync failed", "error", err)
+					writeStatus(func(status *appstate.Status) { status.LastError = err.Error() })
+				}
+			})
 		})
 		sharedState.SetPageToken(token)
 		writeStatus(func(status *appstate.Status) {
-			status.State = "idle"
+			if syncErr != nil {
+				status.State = "error"
+			} else {
+				status.State = "idle"
+			}
 			status.LastSyncFinished = time.Now()
 		})
 	}

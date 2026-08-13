@@ -34,7 +34,7 @@ func Sync(
 		metadata = cloneMetadata(metadata)
 		dbStore = nil
 	}
-	resolvedLocalPath, err := ensureSyncRoot(cfg)
+	resolvedLocalPath, err := ensureSyncRoot(cfg, !options.DryRun)
 	if err != nil {
 		return err
 	}
@@ -49,8 +49,8 @@ func Sync(
 	if err := refreshRemoteState(ctx, driveService, remoteFiles, metadata, cfg, pageToken, dbStore); err != nil {
 		return err
 	}
-	preflightTasks := collapseLocalDeletionSubtrees(planDeletionPreflight(localFiles, remoteFiles, metadata, cfg.IgnoreRegexps), localFiles)
-	if err := validateDeletionSafety(preflightTasks, len(localFiles), cfg, options.AllowUnsafeDeletes); err != nil {
+	preflightTasks := collapseDeletionSubtrees(planDeletionPreflight(localFiles, remoteFiles, metadata, cfg.IgnoreRegexps), localFiles, remoteFiles)
+	if err := validateDeletionSafety(preflightTasks, len(localFiles), len(remoteFiles), cfg, options.AllowUnsafeDeletes); err != nil {
 		return err
 	}
 
@@ -70,11 +70,11 @@ func Sync(
 
 	tasks := planSyncTasks(localFiles, remoteFiles, metadata, cfg.IgnoreRegexps, createdRemoteFolders)
 	tasks = append(tasks, folderTasks...)
-	tasks = collapseLocalDeletionSubtrees(tasks, localFiles)
+	tasks = collapseDeletionSubtrees(tasks, localFiles, remoteFiles)
 	if options.OnPlan != nil {
 		options.OnPlan(len(tasks))
 	}
-	if err := validateDeletionSafety(tasks, len(localFiles), cfg, options.AllowUnsafeDeletes); err != nil {
+	if err := validateDeletionSafety(tasks, len(localFiles), len(remoteFiles), cfg, options.AllowUnsafeDeletes); err != nil {
 		return err
 	}
 
@@ -84,14 +84,8 @@ func Sync(
 	}
 
 	if dbStore != nil && !options.DryRun {
-		if err := dbStore.ReplaceAllRemoteFiles(remoteFiles); err != nil {
-			logger.Error("Failed to save remote files", "error", err)
-		}
-		if err := dbStore.ReplaceAllMetadata(metadata); err != nil {
-			logger.Error("Failed to save metadata", "error", err)
-		}
-		if err := dbStore.SavePageToken(*pageToken); err != nil {
-			logger.Error("Failed to save page token", "error", err)
+		if err := dbStore.ReplaceSyncState(remoteFiles, metadata, *pageToken); err != nil {
+			return fmt.Errorf("persist sync state: %w", err)
 		}
 	}
 
@@ -121,6 +115,30 @@ func collapseLocalDeletionSubtrees(tasks []types.SyncTask, localFiles types.Loca
 			}
 		}
 		if !isDescendant {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
+}
+
+func collapseDeletionSubtrees(tasks []types.SyncTask, localFiles types.LocalFileMap, remoteFiles types.DriveFileMap) []types.SyncTask {
+	tasks = collapseLocalDeletionSubtrees(tasks, localFiles)
+	deletedRemoteFolders := make([]string, 0)
+	for _, task := range tasks {
+		if remote := remoteFiles[task.FilePath]; task.Action == types.ActionDeleteRemote && remote != nil && remote.IsDirectory {
+			deletedRemoteFolders = append(deletedRemoteFolders, task.FilePath)
+		}
+	}
+	filtered := make([]types.SyncTask, 0, len(tasks))
+	for _, task := range tasks {
+		descendant := false
+		for _, folder := range deletedRemoteFolders {
+			if task.Action == types.ActionDeleteRemote && task.FilePath != folder && strings.HasPrefix(task.FilePath, folder+string(os.PathSeparator)) {
+				descendant = true
+				break
+			}
+		}
+		if !descendant {
 			filtered = append(filtered, task)
 		}
 	}
@@ -204,14 +222,19 @@ type SyncOptions struct {
 	OnPlan             func(taskCount int)
 }
 
-func validateDeletionSafety(tasks []types.SyncTask, localFileCount int, cfg *config.Config, allowUnsafe bool) error {
+func validateDeletionSafety(tasks []types.SyncTask, localFileCount, remoteFileCount int, cfg *config.Config, allowUnsafe bool) error {
 	if allowUnsafe {
 		return nil
 	}
-	deletions := 0
+	deletions, localDeletions, remoteDeletions := 0, 0, 0
 	for _, task := range tasks {
-		if task.Action == types.ActionDeleteLocal || task.Action == types.ActionDeleteRemote {
+		switch task.Action {
+		case types.ActionDeleteLocal:
 			deletions++
+			localDeletions++
+		case types.ActionDeleteRemote:
+			deletions++
+			remoteDeletions++
 		}
 	}
 	if deletions == 0 {
@@ -220,10 +243,18 @@ func validateDeletionSafety(tasks []types.SyncTask, localFileCount int, cfg *con
 	if cfg.MaxDeletionsPerSync > 0 && deletions > cfg.MaxDeletionsPerSync {
 		return fmt.Errorf("deletion safety threshold exceeded: planned %d deletions, maximum is %d", deletions, cfg.MaxDeletionsPerSync)
 	}
-	if cfg.MaxDeletionPercent > 0 && localFileCount > 0 {
-		percent := float64(deletions) * 100 / float64(localFileCount)
-		if percent > cfg.MaxDeletionPercent {
-			return fmt.Errorf("deletion safety threshold exceeded: %.1f%% planned, maximum is %.1f%%", percent, cfg.MaxDeletionPercent)
+	if cfg.MaxDeletionPercent > 0 {
+		if localDeletions > 0 && localFileCount == 0 {
+			return fmt.Errorf("deletion safety threshold exceeded: %d local deletions with an empty local baseline", localDeletions)
+		}
+		if remoteDeletions > 0 && remoteFileCount == 0 {
+			return fmt.Errorf("deletion safety threshold exceeded: %d remote deletions with an empty remote baseline", remoteDeletions)
+		}
+		if localDeletions > 0 && float64(localDeletions)*100/float64(localFileCount) > cfg.MaxDeletionPercent {
+			return fmt.Errorf("local deletion safety threshold exceeded: %d of %d files", localDeletions, localFileCount)
+		}
+		if remoteDeletions > 0 && float64(remoteDeletions)*100/float64(remoteFileCount) > cfg.MaxDeletionPercent {
+			return fmt.Errorf("remote deletion safety threshold exceeded: %d of %d files", remoteDeletions, remoteFileCount)
 		}
 	}
 	return nil

@@ -18,15 +18,19 @@ import (
 	"gdrive-bisync/internal/utils"
 )
 
-func ensureSyncRoot(cfg *config.Config) (string, error) {
+func ensureSyncRoot(cfg *config.Config, create bool) (string, error) {
 	resolvedLocalPath := utils.ResolvePath(cfg.LocalSyncPath)
 	if resolvedLocalPath == "" || cfg.RemoteFolderID == "" {
 		logger.Error("Error: LOCAL_SYNC_PATH and REMOTE_FOLDER_ID must be configured.")
 		return "", fmt.Errorf("invalid configuration")
 	}
 
-	if err := os.MkdirAll(resolvedLocalPath, 0755); err != nil {
-		return "", fmt.Errorf("failed to create local sync path: %w", err)
+	if create {
+		if err := os.MkdirAll(resolvedLocalPath, 0755); err != nil {
+			return "", fmt.Errorf("failed to create local sync path: %w", err)
+		}
+	} else if _, err := os.Stat(resolvedLocalPath); err != nil {
+		return "", fmt.Errorf("dry-run requires existing local sync path: %w", err)
 	}
 
 	return resolvedLocalPath, nil
@@ -86,12 +90,6 @@ func refreshRemoteState(
 			remoteFiles[key] = value
 		}
 
-		if dbStore != nil {
-			if err := dbStore.ReplaceAllRemoteFiles(remoteFiles); err != nil {
-				logger.Error("Failed to persist remote files after full scan", "error", err)
-			}
-		}
-
 		return nil
 	}
 
@@ -106,15 +104,7 @@ func refreshRemoteState(
 	relevantChanges := filterRelevantChanges(changeResult.Changes, remoteFiles)
 	if len(relevantChanges) > 0 {
 		logger.Info(fmt.Sprintf("Processing %d relevant remote changes (of %d total)...", len(relevantChanges), len(changeResult.Changes)))
-		changedByApply, deletedByApply, deletedMetadataByApply := applyChanges(relevantChanges, remoteFiles, metadata, cfg.RemoteFolderID, cfg.IgnoreRegexps)
-		if dbStore != nil {
-			if err := dbStore.SaveRemoteFiles(changedByApply, deletedByApply); err != nil {
-				logger.Error("Failed to persist incremental remote changes", "error", err)
-			}
-			if err := dbStore.SaveMetadata(metadata, deletedMetadataByApply); err != nil {
-				logger.Error("Failed to persist incremental metadata changes", "error", err)
-			}
-		}
+		_, _, _ = applyChanges(relevantChanges, remoteFiles, metadata, cfg.RemoteFolderID, cfg.IgnoreRegexps)
 	} else {
 		logger.Info("No remote changes found.")
 	}
@@ -199,11 +189,6 @@ func reconcileFolders(
 		}
 
 		remoteFiles[folder.Path] = newDriveFile
-		if dbStore != nil {
-			if err := dbStore.SaveRemoteFiles(types.DriveFileMap{folder.Path: newDriveFile}, nil); err != nil {
-				logger.Error("Failed to persist new remote folder", "path", folder.Path, "error", err)
-			}
-		}
 		metadata[folder.Path] = &types.FileMetadata{}
 		changedMetadata[folder.Path] = metadata[folder.Path]
 		createdRemoteFolders[folder.Path] = struct{}{}

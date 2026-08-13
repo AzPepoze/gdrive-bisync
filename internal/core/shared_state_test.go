@@ -29,3 +29,24 @@ func TestSharedState_TracksDownloadsDuringExclusiveSync(t *testing.T) {
 		t.Fatal("tracking a download while syncing deadlocked")
 	}
 }
+
+func TestRunMutationSerializesCallers(t *testing.T) {
+	state := NewSharedState(types.DriveFileMap{}, map[string]*types.FileMetadata{}, "")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	go state.RunMutation(func() { close(entered); <-release })
+	<-entered
+	go func() { state.RunMutation(func() {}); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("second mutation entered concurrently")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("second mutation never ran")
+	}
+}

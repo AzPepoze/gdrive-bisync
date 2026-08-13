@@ -9,12 +9,20 @@ import (
 
 type SharedState struct {
 	mutex              sync.RWMutex
+	mutationMutex      sync.Mutex
 	activityMutex      sync.RWMutex
 	remoteFiles        types.DriveFileMap
 	metadata           map[string]*types.FileMetadata
 	pageToken          string
 	activeDownloads    map[string]time.Time
 	completedDownloads map[string]time.Time
+}
+
+// RunMutation serializes remote API mutations performed by periodic sync and the watcher.
+func (sharedState *SharedState) RunMutation(callback func()) {
+	sharedState.mutationMutex.Lock()
+	defer sharedState.mutationMutex.Unlock()
+	callback()
 }
 
 func NewSharedState(remoteFiles types.DriveFileMap, metadata map[string]*types.FileMetadata, pageToken string) *SharedState {

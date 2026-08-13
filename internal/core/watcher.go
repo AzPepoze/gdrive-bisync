@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -60,6 +61,7 @@ func WatchLocalFiles(
 
 	debounceTimers := make(map[string]*time.Timer)
 	debounceOps := make(map[string]fsnotify.Op)
+	var debounceMu sync.Mutex
 
 	for {
 		select {
@@ -99,6 +101,7 @@ func WatchLocalFiles(
 				}
 			}
 
+			debounceMu.Lock()
 			if timer, ok := debounceTimers[relativePath]; ok {
 				timer.Stop()
 			}
@@ -108,10 +111,17 @@ func WatchLocalFiles(
 			mergedEvent := fsnotify.Event{Name: event.Name, Op: debounceOps[relativePath]}
 
 			debounceTimers[relativePath] = time.AfterFunc(time.Duration(cfg.WatchDebounceDelay)*time.Millisecond, func() {
+				debounceMu.Lock()
 				delete(debounceTimers, relPathCopy)
 				delete(debounceOps, relPathCopy)
-				handleWatchEvent(mergedEvent, localPath, relPathCopy, driveService, sharedState, cfg, dbStore)
+				debounceMu.Unlock()
+				if sharedState != nil {
+					sharedState.RunMutation(func() { handleWatchEvent(mergedEvent, localPath, relPathCopy, driveService, sharedState, cfg, dbStore) })
+				} else {
+					handleWatchEvent(mergedEvent, localPath, relPathCopy, driveService, sharedState, cfg, dbStore)
+				}
 			})
+			debounceMu.Unlock()
 
 		case err, ok := <-watcher.Errors:
 			if !ok {
@@ -188,8 +198,11 @@ func handleWatchEvent(
 		})
 
 		if dbStore != nil {
-			changedRemote := types.DriveFileMap{relativePath: uploadedFile}
-			if err := dbStore.SaveRemoteFiles(changedRemote, nil); err != nil {
+			var fileMetadata *types.FileMetadata
+			sharedState.ReadRemoteFiles(func(_ types.DriveFileMap, metadata map[string]*types.FileMetadata) {
+				fileMetadata = metadata[relativePath]
+			})
+			if err := dbStore.SaveFileState(relativePath, uploadedFile, fileMetadata); err != nil {
 				logger.Error("Failed to persist remote file to store", "path", relativePath, "error", err)
 			}
 		}

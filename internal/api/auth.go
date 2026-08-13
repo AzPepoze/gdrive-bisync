@@ -137,6 +137,10 @@ func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
 	authCode := <-codeChan
 
 	tok, err := config.Exchange(ctx, authCode)
+	if err != nil {
+		logger.Error("Unable to exchange authorization code", "error", err)
+		return nil
+	}
 	payload := AuthorizedUser{
 		Type:         "authorized_user",
 		ClientID:     config.ClientID,
@@ -151,7 +155,10 @@ func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
 		return nil
 	}
 	defer f.Close()
-	json.NewEncoder(f).Encode(payload)
+	if err := json.NewEncoder(f).Encode(payload); err != nil {
+		logger.Error("Unable to cache oauth token", "error", err)
+		return nil
+	}
 
 	return config.Client(ctx, tok)
 }
