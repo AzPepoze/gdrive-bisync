@@ -133,7 +133,7 @@ func collapseDeletionSubtrees(tasks []types.SyncTask, localFiles types.LocalFile
 	for _, task := range tasks {
 		descendant := false
 		for _, folder := range deletedRemoteFolders {
-			if task.Action == types.ActionDeleteRemote && task.FilePath != folder && strings.HasPrefix(task.FilePath, folder+string(os.PathSeparator)) {
+			if task.Action == types.ActionDeleteRemote && task.FilePath != folder && isRemoteDescendant(task.FilePath, folder) {
 				descendant = true
 				break
 			}
@@ -143,6 +143,12 @@ func collapseDeletionSubtrees(tasks []types.SyncTask, localFiles types.LocalFile
 		}
 	}
 	return filtered
+}
+
+func isRemoteDescendant(candidate, parent string) bool {
+	candidate = strings.ReplaceAll(candidate, `\`, "/")
+	parent = strings.TrimSuffix(strings.ReplaceAll(parent, `\`, "/"), "/")
+	return strings.HasPrefix(candidate, parent+"/")
 }
 
 func planDeletionPreflight(

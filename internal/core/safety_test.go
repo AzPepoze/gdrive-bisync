@@ -58,3 +58,15 @@ func TestCollapseDeletionSubtreesKeepsRemoteParentOnly(t *testing.T) {
 		t.Fatalf("unexpected collapsed tasks: %#v", collapsed)
 	}
 }
+
+func TestRemoteDescendantUsesDriveSeparatorsOnEveryPlatform(t *testing.T) {
+	if !isRemoteDescendant("folder/file.txt", "folder") {
+		t.Fatal("slash-normalized remote child was not recognized")
+	}
+	if !isRemoteDescendant(`folder\file.txt`, "folder") {
+		t.Fatal("backslash remote child was not normalized")
+	}
+	if isRemoteDescendant("folder-two/file.txt", "folder") {
+		t.Fatal("prefix sibling was mistaken for descendant")
+	}
+}
