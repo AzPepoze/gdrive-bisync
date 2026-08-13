@@ -5,7 +5,7 @@ LOG_DIR := logs
 CONFIG_EXAMPLE := config/config.example.json
 GO_CACHE_DIR ?= /tmp/gocache
 
-.PHONY: all clean linux windows release build dev test vet
+.PHONY: all clean linux windows release build dev test race vet lint format-check mod-check build-check check
 
 all: release
 
@@ -15,11 +15,41 @@ dev:
 
 test:
 	@echo "Running tests..."
-	GOCACHE=$(GO_CACHE_DIR) go test ./...
+	GOCACHE=$(GO_CACHE_DIR) go test ./... -count=1
+
+race:
+	@echo "Running race detector..."
+	GOCACHE=$(GO_CACHE_DIR) go test -race ./... -count=1
 
 vet:
 	@echo "Running go vet..."
 	GOCACHE=$(GO_CACHE_DIR) go vet ./...
+
+lint:
+	@echo "Running golangci-lint..."
+	golangci-lint run ./...
+
+format-check:
+	@echo "Checking Go formatting..."
+	@test -z "$$(gofmt -l $$(git ls-files '*.go'))" || { \
+		echo "These files need gofmt:"; \
+		gofmt -l $$(git ls-files '*.go'); \
+		exit 1; \
+	}
+
+mod-check:
+	@echo "Verifying Go modules..."
+	go mod verify
+	go mod tidy -diff
+
+build-check:
+	@echo "Building Linux binary..."
+	GOCACHE=$(GO_CACHE_DIR) go build -trimpath -o /tmp/gdrive-bisync-check ./cmd/gdrive-bisync
+	@echo "Building Windows binary..."
+	GOCACHE=$(GO_CACHE_DIR) GOOS=windows GOARCH=amd64 go build -trimpath -o /tmp/gdrive-bisync-check.exe ./cmd/gdrive-bisync
+
+check: format-check mod-check lint test race vet build-check
+	@echo "All checks passed."
 
 linux:
 	@echo "Building for Linux (amd64)..."

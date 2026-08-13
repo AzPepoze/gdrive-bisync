@@ -50,13 +50,15 @@ test/trash-restore
 Go 1.25 or newer is required.
 
 ```bash
+make check
+```
+
+`make check` verifies formatting and Go modules, runs `golangci-lint`, unit and integration tests, the race detector, `go vet`, and Linux/Windows builds.
+
+To format code before running the checks:
+
+```bash
 gofmt -w $(git ls-files '*.go')
-golangci-lint run ./...
-go test ./... -count=1
-go test -race ./... -count=1
-go vet ./...
-go build ./cmd/gdrive-bisync
-GOOS=windows GOARCH=amd64 go build ./cmd/gdrive-bisync
 ```
 
 Changes involving deletion, trash, path handling, locking, downloads, or sync-state persistence need targeted tests because those areas protect user data.
