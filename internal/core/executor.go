@@ -279,9 +279,8 @@ func (executor *Executor) handleDeleteRemote(task types.SyncTask, index, total i
 		delete(executor.remoteFiles, task.FilePath)
 
 		if remoteFile.IsDirectory {
-			prefix := task.FilePath + string(os.PathSeparator)
 			for key := range executor.remoteFiles {
-				if strings.HasPrefix(key, prefix) {
+				if isRemoteDescendant(key, task.FilePath) {
 					delete(executor.remoteFiles, key)
 					delete(executor.metadata, key)
 				}

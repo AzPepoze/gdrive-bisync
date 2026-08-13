@@ -140,11 +140,11 @@ func RestoreTrash(rootPath string, entryID string) (TrashEntry, error) {
 		return TrashEntry{}, err
 	}
 	destination := filepath.Join(rootAbsolute, filepath.FromSlash(selected.OriginalPath))
-	if !pathWithin(rootAbsolute, destination) {
+	if !pathWithinWithoutSymlinks(rootAbsolute, filepath.Dir(destination)) {
 		return TrashEntry{}, fmt.Errorf("trash entry contains unsafe original path %q", selected.OriginalPath)
 	}
 	trashRoot := filepath.Join(rootAbsolute, ".trash")
-	if !pathWithin(trashRoot, selected.TrashPath) {
+	if !pathWithinWithoutSymlinks(trashRoot, selected.TrashPath) {
 		return TrashEntry{}, fmt.Errorf("trash entry contains unsafe payload path")
 	}
 	if _, err := os.Stat(destination); err == nil {
@@ -162,6 +162,39 @@ func RestoreTrash(rootPath string, entryID string) (TrashEntry, error) {
 		return TrashEntry{}, err
 	}
 	return *selected, nil
+}
+
+func pathWithinWithoutSymlinks(root, candidate string) bool {
+	if !pathWithin(root, candidate) {
+		return false
+	}
+	rootAbsolute, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	candidateAbsolute, err := filepath.Abs(candidate)
+	if err != nil {
+		return false
+	}
+	relative, err := filepath.Rel(rootAbsolute, candidateAbsolute)
+	if err != nil {
+		return false
+	}
+	current := rootAbsolute
+	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func pathWithin(root string, candidate string) bool {

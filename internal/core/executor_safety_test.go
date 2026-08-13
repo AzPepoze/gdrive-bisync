@@ -52,3 +52,20 @@ func TestWaitForRetryHonorsCancellation(t *testing.T) {
 		t.Fatal("canceled retry wait did not return promptly")
 	}
 }
+
+func TestRemoteFolderDeletionRemovesSlashAndBackslashDescendants(t *testing.T) {
+	drive := &fakeDriveService{}
+	remoteFiles := types.DriveFileMap{
+		"folder":               {ID: "folder-id", Path: "folder", IsDirectory: true},
+		"folder/slash.txt":     {ID: "slash-id", Path: "folder/slash.txt"},
+		`folder\backslash.txt`: {ID: "backslash-id", Path: `folder\backslash.txt`},
+	}
+	metadata := map[string]*types.FileMetadata{"folder": {}, "folder/slash.txt": {}, `folder\backslash.txt`: {}}
+	executor := NewExecutor(drive, remoteFiles, metadata, &config.Config{MaxConcurrentDownloads: 1, MaxConcurrentUploads: 1}, t.TempDir(), nil, false)
+	if err := executor.ExecuteTasks([]types.SyncTask{{Action: types.ActionDeleteRemote, FilePath: "folder"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(remoteFiles) != 0 || len(metadata) != 0 {
+		t.Fatalf("folder descendants remain: remote=%v metadata=%v", remoteFiles, metadata)
+	}
+}

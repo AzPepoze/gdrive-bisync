@@ -28,6 +28,9 @@ func Sync(
 	sharedState *SharedState,
 	options SyncOptions,
 ) error {
+	if pageToken == nil {
+		return fmt.Errorf("page token pointer is required")
+	}
 	ctx := context.Background()
 	if options.DryRun {
 		remoteFiles = cloneRemoteFiles(remoteFiles)

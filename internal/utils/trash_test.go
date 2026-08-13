@@ -67,3 +67,32 @@ func TestPathWithinRejectsTraversal(t *testing.T) {
 		t.Fatal("expected nested path to be accepted")
 	}
 }
+
+func TestRestoreTrashRejectsSymlinkDestinationEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	originalDirectory := filepath.Join(root, "notes")
+	if err := os.MkdirAll(originalDirectory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	original := filepath.Join(originalDirectory, "secret.txt")
+	if err := os.WriteFile(original, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := TrashPath(root, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(originalDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, originalDirectory); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := RestoreTrash(root, entry.ID); err == nil {
+		t.Fatal("expected symlink destination to be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "secret.txt")); !os.IsNotExist(err) {
+		t.Fatalf("restore escaped sync root: %v", err)
+	}
+}

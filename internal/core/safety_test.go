@@ -70,3 +70,9 @@ func TestRemoteDescendantUsesDriveSeparatorsOnEveryPlatform(t *testing.T) {
 		t.Fatal("prefix sibling was mistaken for descendant")
 	}
 }
+
+func TestSyncRejectsNilPageToken(t *testing.T) {
+	if err := Sync(nil, nil, nil, &config.Config{}, nil, nil, nil, SyncOptions{}); err == nil {
+		t.Fatal("expected nil page token to be rejected")
+	}
+}
