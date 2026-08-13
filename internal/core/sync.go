@@ -52,6 +52,9 @@ func Sync(
 	if err := refreshRemoteState(ctx, driveService, remoteFiles, metadata, cfg, pageToken, dbStore); err != nil {
 		return err
 	}
+	if options.OnInventory != nil {
+		options.OnInventory(len(localFiles), len(remoteFiles))
+	}
 	preflightTasks := collapseDeletionSubtrees(planDeletionPreflight(localFiles, remoteFiles, metadata, cfg.IgnoreRegexps), localFiles, remoteFiles)
 	if err := validateDeletionSafety(preflightTasks, len(localFiles), len(remoteFiles), cfg, options.AllowUnsafeDeletes); err != nil {
 		return err
@@ -77,11 +80,15 @@ func Sync(
 	if options.OnPlan != nil {
 		options.OnPlan(len(tasks))
 	}
+	if options.OnTasks != nil {
+		options.OnTasks(tasks)
+	}
 	if err := validateDeletionSafety(tasks, len(localFiles), len(remoteFiles), cfg, options.AllowUnsafeDeletes); err != nil {
 		return err
 	}
 
 	executor := NewExecutor(driveService, remoteFiles, metadata, cfg, resolvedLocalPath, sharedState, options.DryRun)
+	executor.SetTaskCompleteCallback(options.OnTaskComplete)
 	if err := executor.ExecuteTasks(tasks); err != nil {
 		return fmt.Errorf("sync tasks execution failed: %w", err)
 	}
@@ -229,6 +236,9 @@ type SyncOptions struct {
 	DryRun             bool
 	AllowUnsafeDeletes bool
 	OnPlan             func(taskCount int)
+	OnInventory        func(localItems, remoteItems int)
+	OnTasks            func(tasks []types.SyncTask)
+	OnTaskComplete     func(task types.SyncTask, err error)
 }
 
 func validateDeletionSafety(tasks []types.SyncTask, localFileCount, remoteFileCount int, cfg *config.Config, allowUnsafe bool) error {

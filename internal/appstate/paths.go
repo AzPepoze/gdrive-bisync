@@ -6,10 +6,13 @@ import (
 )
 
 type Paths struct {
-	Directory  string
-	LockFile   string
-	StatusFile string
-	PauseFile  string
+	Directory   string
+	LockFile    string
+	StatusFile  string
+	PauseFile   string
+	EventsFile  string
+	SyncNowFile string
+	DryRunFile  string
 }
 
 func DefaultPaths() (Paths, error) {
@@ -19,10 +22,13 @@ func DefaultPaths() (Paths, error) {
 	}
 	directory := filepath.Join(configDir, "gdrive-bisync", "runtime")
 	return Paths{
-		Directory:  directory,
-		LockFile:   filepath.Join(directory, "instance.lock"),
-		StatusFile: filepath.Join(directory, "status.json"),
-		PauseFile:  filepath.Join(directory, "paused"),
+		Directory:   directory,
+		LockFile:    filepath.Join(directory, "instance.lock"),
+		StatusFile:  filepath.Join(directory, "status.json"),
+		PauseFile:   filepath.Join(directory, "paused"),
+		EventsFile:  filepath.Join(directory, "events.jsonl"),
+		SyncNowFile: filepath.Join(directory, "sync-now"),
+		DryRunFile:  filepath.Join(directory, "dry-run"),
 	}, nil
 }
 

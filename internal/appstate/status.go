@@ -18,6 +18,18 @@ type Status struct {
 	NextSync         time.Time `json:"nextSync,omitempty"`
 	LastError        string    `json:"lastError,omitempty"`
 	TaskCount        int       `json:"taskCount"`
+	CompletedTasks   int       `json:"completedTasks"`
+	LocalItems       int       `json:"localItems"`
+	RemoteItems      int       `json:"remoteItems"`
+	Uploads          int       `json:"uploads"`
+	Downloads        int       `json:"downloads"`
+	Deletions        int       `json:"deletions"`
+	Folders          int       `json:"folders"`
+	FailedTasks      int       `json:"failedTasks"`
+	CurrentOperation string    `json:"currentOperation,omitempty"`
+	WatcherHealthy   bool      `json:"watcherHealthy"`
+	Notifications    bool      `json:"notifications"`
+	DryRun           bool      `json:"dryRun"`
 }
 
 func WriteStatus(path string, status Status) error {

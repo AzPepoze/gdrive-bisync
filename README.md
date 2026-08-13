@@ -122,34 +122,40 @@ Useful systemd commands:
 
 ## Bubble Tea TUI
 
-Open it without starting a second sync process:
+Running the command in an interactive terminal opens the dashboard without starting a second sync process:
 
 ```bash
-gdrive-bisync --tui
+gdrive-bisync
 ```
 
 | Key | Action |
 |:---:|---|
-| `p` | Pause syncing |
-| `r` | Resume syncing |
-| `x` | Enter a trash ID and restore it |
-| `Esc` | Cancel restore input |
+| `1`–`7`, `Tab` | Open Overview, Activity, Logs, Trash, Safety, System, or Help |
+| `j` / `k` | Scroll the active view |
+| `/` | Filter activity and logs |
+| `e` | Show only errors |
+| `f` | Toggle path privacy |
+| `p` | Pause or resume syncing |
+| `s` | Request an immediate sync |
+| `d` | Request a non-mutating dry-run preview |
+| `x` | Enter a trash ID, then confirm restoration |
+| `Esc` | Clear a filter or cancel input |
 | `q` or `Ctrl+C` | Quit the TUI |
 
-The dashboard refreshes once per second and displays:
+The responsive dashboard refreshes once per second. It reads a bounded structured event journal and atomic status snapshot written by the daemon:
 
 ```text
-gdrive-bisync manager
+gdrive-bisync  ● HEALTHY
+1 Overview  2 Activity  3 Logs  4 Trash  5 Safety  6 System  7 Help
 
-State: idle         PID: 12345    Paused: false
-Last sync: 2026-08-14 01:20:00    Planned tasks: 0
-
-Recoverable trash: 2
-  20260814T004242.395108454  Secured/example.conf
-  20260813T183010.112233445  Notes/archive.md
-
-p pause · r resume · x restore · q quit
+╭ HEALTH ─────────────────╮  ╭ CURRENT SYNC ────────────╮
+│ Last sync  01:20:00     │  │ Progress ███████░░ 72%   │
+│ Next sync  01:21:00     │  │ ↑ 4  ↓ 2  − 0  + 3      │
+│ Watcher    healthy      │  │ Tasks 13 / 18            │
+╰─────────────────────────╯  ╰───────────────────────────╯
 ```
+
+The TUI contains observability and sync controls only. It intentionally does not include a file manager; use the operating system file explorer for browsing files.
 
 ## Configuration reference
 
@@ -284,6 +290,9 @@ flowchart LR
 | `runtime/instance.lock` | Single-process ownership and PID | `0600` |
 | `runtime/status.json` | TUI/CLI runtime status | `0600` |
 | `runtime/paused` | Pause marker | `0600` |
+| `runtime/events.jsonl` | Bounded structured log and activity history | `0600` |
+| `runtime/sync-now` | One-shot manual-sync request | `0600` |
+| `runtime/dry-run` | One-shot dry-run request | `0600` |
 
 ## Logging
 

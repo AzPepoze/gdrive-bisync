@@ -19,14 +19,19 @@ import (
 )
 
 type Executor struct {
-	driveService api.DriveClient
-	remoteFiles  types.DriveFileMap
-	metadata     map[string]*types.FileMetadata
-	cfg          *config.Config
-	metaMu       sync.Mutex
-	localPath    string
-	sharedState  *SharedState
-	dryRun       bool
+	driveService   api.DriveClient
+	remoteFiles    types.DriveFileMap
+	metadata       map[string]*types.FileMetadata
+	cfg            *config.Config
+	metaMu         sync.Mutex
+	localPath      string
+	sharedState    *SharedState
+	dryRun         bool
+	onTaskComplete func(task types.SyncTask, err error)
+}
+
+func (executor *Executor) SetTaskCompleteCallback(callback func(task types.SyncTask, err error)) {
+	executor.onTaskComplete = callback
 }
 
 func NewExecutor(
@@ -82,7 +87,9 @@ func (executor *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 					return err
 				}
 				defer func() { <-downloadSlots }()
-				return executor.downloadWithRetry(ctx, taskCopy, taskIndex, len(tasks))
+				err := executor.downloadWithRetry(ctx, taskCopy, taskIndex, len(tasks))
+				executor.reportTaskComplete(taskCopy, err)
+				return err
 			})
 
 		case types.ActionUploadNew, types.ActionUploadUpdate, types.ActionUploadConflict:
@@ -91,7 +98,9 @@ func (executor *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 					return err
 				}
 				defer func() { <-uploadSlots }()
-				return executor.uploadWithRetry(ctx, taskCopy, taskIndex, len(tasks))
+				err := executor.uploadWithRetry(ctx, taskCopy, taskIndex, len(tasks))
+				executor.reportTaskComplete(taskCopy, err)
+				return err
 			})
 
 		case types.ActionDeleteLocal:
@@ -107,7 +116,11 @@ func (executor *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 			}{taskCopy, taskIndex})
 
 		case types.ActionCreateLocalFolder:
-			group.Go(func() error { return executor.createLocalFolder(taskCopy, taskIndex, len(tasks)) })
+			group.Go(func() error {
+				err := executor.createLocalFolder(taskCopy, taskIndex, len(tasks))
+				executor.reportTaskComplete(taskCopy, err)
+				return err
+			})
 		}
 	}
 
@@ -117,15 +130,24 @@ func (executor *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 	for _, deletion := range deletionTasks {
 		if deletion.task.Action == types.ActionDeleteLocal {
 			if err := executor.handleDeleteLocal(deletion.task, deletion.index, len(tasks)); err != nil {
+				executor.reportTaskComplete(deletion.task, err)
 				return err
 			}
 		} else {
 			if err := executor.handleDeleteRemote(deletion.task, deletion.index, len(tasks)); err != nil {
+				executor.reportTaskComplete(deletion.task, err)
 				return err
 			}
 		}
+		executor.reportTaskComplete(deletion.task, nil)
 	}
 	return nil
+}
+
+func (executor *Executor) reportTaskComplete(task types.SyncTask, err error) {
+	if executor.onTaskComplete != nil {
+		executor.onTaskComplete(task, err)
+	}
 }
 
 func (executor *Executor) createLocalFolder(task types.SyncTask, index, total int) error {

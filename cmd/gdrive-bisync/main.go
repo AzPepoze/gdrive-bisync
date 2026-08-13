@@ -106,7 +106,7 @@ func main() {
 		os.Exit(1)
 	}
 	if shouldOpenTUI(pflag.NFlag(), stdoutIsTerminal()) || *tuiFlag {
-		if err := tui.RunTerminal(runtimePaths, resolvedLocalPath); err != nil {
+		if err := tui.RunTerminal(runtimePaths, resolvedLocalPath, cfg); err != nil {
 			logger.Error("TUI failed", "error", err)
 			os.Exit(1)
 		}
@@ -157,6 +157,15 @@ func main() {
 		os.Exit(2)
 	}
 	defer func() { _ = instanceLock.Close() }()
+	eventJournal, eventErr := appstate.OpenEventJournal(runtimePaths.EventsFile)
+	if eventErr != nil {
+		logger.Warn("Failed to open runtime event journal", "error", eventErr)
+	} else {
+		logger.SetEventSink(func(level, category, message string, fields map[string]any) {
+			_ = eventJournal.Append(appstate.Event{Time: time.Now(), Level: level, Category: category, Message: message, Fields: fields})
+		})
+		defer logger.SetEventSink(nil)
+	}
 
 	dbPath := filepath.Join(resolvedLocalPath, cfg.DBFileName)
 	if !*dryRunFlag {
@@ -230,7 +239,7 @@ func main() {
 	}
 
 	sharedState := core.NewSharedState(remoteFiles, metadata, pageToken)
-	runtimeStatus := appstate.Status{PID: os.Getpid(), State: "starting", StartedAt: time.Now()}
+	runtimeStatus := appstate.Status{PID: os.Getpid(), State: "starting", StartedAt: time.Now(), WatcherHealthy: true, Notifications: cfg.DesktopNotifications}
 	var statusMu sync.Mutex
 	writeStatus := func(update func(*appstate.Status)) {
 		statusMu.Lock()
@@ -243,8 +252,12 @@ func main() {
 	}
 	writeStatus(func(status *appstate.Status) {})
 
-	runSync := func() {
-		if appstate.IsPaused(runtimePaths.PauseFile) && !*dryRunFlag {
+	var syncRunMu sync.Mutex
+	runSync := func(requestDryRun bool) {
+		syncRunMu.Lock()
+		defer syncRunMu.Unlock()
+		effectiveDryRun := *dryRunFlag || requestDryRun
+		if appstate.IsPaused(runtimePaths.PauseFile) && !effectiveDryRun {
 			writeStatus(func(status *appstate.Status) { status.State = "paused" })
 			return
 		}
@@ -252,16 +265,49 @@ func main() {
 			status.State = "syncing"
 			status.LastSyncStarted = time.Now()
 			status.LastError = ""
+			status.CompletedTasks = 0
+			status.FailedTasks = 0
+			status.CurrentOperation = "Planning sync"
+			status.DryRun = effectiveDryRun
 		})
 		token := sharedState.GetPageToken()
 		var syncErr error
 		sharedState.RunMutation(func() {
 			sharedState.RunExclusive(func(remoteFilesMap types.DriveFileMap, metadataMap map[string]*types.FileMetadata) {
 				if err := core.Sync(driveService, remoteFilesMap, metadataMap, cfg, &token, dbStore, sharedState, core.SyncOptions{
-					DryRun:             *dryRunFlag,
+					DryRun:             effectiveDryRun,
 					AllowUnsafeDeletes: *unsafeDeletesFlag,
 					OnPlan: func(taskCount int) {
 						writeStatus(func(status *appstate.Status) { status.TaskCount = taskCount })
+					},
+					OnInventory: func(localItems, remoteItems int) {
+						writeStatus(func(status *appstate.Status) { status.LocalItems = localItems; status.RemoteItems = remoteItems })
+					},
+					OnTasks: func(tasks []types.SyncTask) {
+						writeStatus(func(status *appstate.Status) {
+							status.Uploads, status.Downloads, status.Deletions, status.Folders = 0, 0, 0, 0
+							for _, task := range tasks {
+								switch task.Action {
+								case types.ActionUploadNew, types.ActionUploadUpdate, types.ActionUploadConflict:
+									status.Uploads++
+								case types.ActionDownloadNew, types.ActionDownloadUpdate:
+									status.Downloads++
+								case types.ActionDeleteLocal, types.ActionDeleteRemote:
+									status.Deletions++
+								case types.ActionCreateLocalFolder:
+									status.Folders++
+								}
+							}
+						})
+					},
+					OnTaskComplete: func(task types.SyncTask, taskErr error) {
+						writeStatus(func(status *appstate.Status) {
+							status.CompletedTasks++
+							status.CurrentOperation = task.Action.String()
+							if taskErr != nil {
+								status.FailedTasks++
+							}
+						})
 					},
 				}); err != nil {
 					syncErr = err
@@ -270,7 +316,9 @@ func main() {
 				}
 			})
 		})
-		sharedState.SetPageToken(token)
+		if !effectiveDryRun {
+			sharedState.SetPageToken(token)
+		}
 		writeStatus(func(status *appstate.Status) {
 			if syncErr != nil {
 				status.State = "error"
@@ -278,6 +326,14 @@ func main() {
 				status.State = "idle"
 			}
 			status.LastSyncFinished = time.Now()
+			if syncErr == nil {
+				status.CompletedTasks = status.TaskCount
+			}
+			status.CurrentOperation = ""
+			status.DryRun = false
+			if syncErr != nil && status.FailedTasks == 0 {
+				status.FailedTasks = 1
+			}
 		})
 		if syncErr != nil {
 			desktopNotifier.Critical("sync", "Google Drive sync failed", syncErr.Error())
@@ -286,13 +342,14 @@ func main() {
 		}
 	}
 
-	runSync()
+	runSync(false)
 	if *dryRunFlag {
 		writeStatus(func(status *appstate.Status) { status.State = "stopped" })
 		return
 	}
 
 	go core.WatchLocalFiles(resolvedLocalPath, driveService, sharedState, cfg, dbStore, runtimePaths.PauseFile, func(err error) {
+		writeStatus(func(status *appstate.Status) { status.WatcherHealthy = false })
 		desktopNotifier.Critical("watcher", "Google Drive live sync failed", err.Error())
 	})
 
@@ -313,10 +370,25 @@ func main() {
 	go func() {
 		for range ticker.C {
 			logger.Info("Triggering periodic sync...")
-			runSync()
+			runSync(false)
 			nextSyncTime = time.Now().Add(time.Duration(cfg.PeriodicSyncIntervalMs) * time.Millisecond)
 			writeStatus(func(status *appstate.Status) { status.NextSync = nextSyncTime })
 			logger.Info("Next periodic sync scheduled", "time", nextSyncTime.Format("2006-01-02 15:04:05"))
+		}
+	}()
+
+	controlTicker := time.NewTicker(time.Second)
+	defer controlTicker.Stop()
+	go func() {
+		for range controlTicker.C {
+			if appstate.ConsumeRequest(runtimePaths.SyncNowFile) {
+				logger.Info("Manual sync requested from TUI")
+				runSync(false)
+			}
+			if appstate.ConsumeRequest(runtimePaths.DryRunFile) {
+				logger.Info("Dry-run preview requested from TUI")
+				runSync(true)
+			}
 		}
 	}()
 
