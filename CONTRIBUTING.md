@@ -1,42 +1,53 @@
 # Contributing to gdrive-bisync
 
-The README is intentionally written for end users. Development, testing, architecture, and release information belongs here.
+Thanks for helping improve gdrive-bisync. Bug fixes, tests, documentation, and focused features are welcome.
 
-## Requirements
+## Before you start
 
-- Go 1.25 or newer
-- A test Google Drive setup for manual integration testing
-- `golangci-lint` for the complete static-analysis pass
+- Search existing issues and pull requests first.
+- Open an issue before starting a large feature or major redesign.
+- Never include OAuth credentials, tokens, Drive IDs, or private filenames in code, tests, screenshots, or logs.
+- Test against a dedicated temporary Drive folder—not your main Drive.
 
-## Development commands
+## Development workflow
 
-| Task | Command |
-|---|---|
-| Run locally | `make dev` |
-| Unit and integration tests | `make test` |
-| Race detector | `go test -race ./...` |
-| Static analysis | `golangci-lint run ./...` |
-| Go vet | `make vet` |
-| Linux build | `make linux` |
-| Windows build | `make windows` |
-| Release archives | `make release` |
+Pull requests should target the `dev` branch. Do not open feature pull requests directly against `main`.
 
-## Architecture
+### 1. Fork and clone
 
-```text
-cmd/gdrive-bisync       CLI, daemon lifecycle, and runtime controls
-internal/api            Google Drive and OAuth integration
-internal/appstate       Lock, status, event journal, and control files
-internal/core           Planning, reconciliation, watcher, and execution
-internal/store          bbolt state and database backups
-internal/services       Logging, notifications, scanning, and systemd
-internal/tui            Bubble Tea observability dashboard
-internal/utils          Trash, restore, and path utilities
+```bash
+git clone https://github.com/YOUR_USERNAME/gdrive-bisync.git
+cd gdrive-bisync
+git remote add upstream https://github.com/AzPepoze/gdrive-bisync.git
 ```
 
-The daemon is the only writer of synchronization state. The TUI reads atomic runtime state and the bounded event journal, then sends one-shot control requests through runtime marker files.
+### 2. Start from the latest `dev`
 
-## Verification before submitting a change
+```bash
+git fetch upstream
+git switch -c fix/short-description upstream/dev
+```
+
+Use a clear branch name:
+
+```text
+fix/prevent-duplicate-upload
+feat/sync-progress
+docs/setup-guide
+test/trash-restore
+```
+
+### 3. Make a focused change
+
+- Keep the pull request limited to one problem.
+- Add regression tests for bug fixes.
+- Preserve unrelated code and behavior.
+- Update the README when flags, configuration, or user behavior changes.
+- Put contributor and internal details in this file, not the README.
+
+### 4. Verify your work
+
+Go 1.25 or newer is required.
 
 ```bash
 gofmt -w $(git ls-files '*.go')
@@ -44,15 +55,79 @@ golangci-lint run ./...
 go test ./... -count=1
 go test -race ./... -count=1
 go vet ./...
-GOOS=windows GOARCH=amd64 go build ./cmd/gdrive-bisync
 go build ./cmd/gdrive-bisync
+GOOS=windows GOARCH=amd64 go build ./cmd/gdrive-bisync
 ```
 
-Changes to deletion planning, trash restoration, persistence, locking, or path handling require targeted regression tests because those areas protect user data.
+Changes involving deletion, trash, path handling, locking, downloads, or sync-state persistence need targeted tests because those areas protect user data.
 
-## Documentation responsibilities
+### 5. Commit and push
 
-- Keep `README.md` focused on installation and product usage.
-- Put contributor workflows and internal architecture in this file.
-- Document user-visible flags and configuration changes in the README.
-- Avoid examples containing real filenames, tokens, folder IDs, or private paths.
+Use a short commit message that explains the result:
+
+```text
+fix: prevent duplicate watcher uploads
+feat: show retry progress in TUI
+docs: clarify OAuth setup
+```
+
+Then push your branch:
+
+```bash
+git push -u origin fix/short-description
+```
+
+### 6. Open a pull request
+
+Open the pull request with:
+
+- Base repository: `AzPepoze/gdrive-bisync`
+- Base branch: `dev`
+- Compare branch: your feature branch
+
+Include:
+
+- What problem it fixes
+- What changed
+- How you tested it
+- Any user-visible behavior or configuration changes
+- Screenshots for TUI changes, with private paths hidden
+
+## Pull request checklist
+
+- [ ] The PR targets `dev`.
+- [ ] The change is focused and does not include unrelated formatting.
+- [ ] Tests cover new behavior or the reported bug.
+- [ ] Unit tests and the race detector pass.
+- [ ] `golangci-lint` and `go vet` pass.
+- [ ] Linux and Windows builds succeed.
+- [ ] User-facing changes are documented.
+- [ ] No private data, credentials, or tokens are included.
+
+## Project layout
+
+| Path | Responsibility |
+|---|---|
+| `cmd/gdrive-bisync` | CLI and daemon lifecycle |
+| `internal/api` | Google Drive and OAuth |
+| `internal/appstate` | Runtime status, events, locks, and controls |
+| `internal/core` | Sync planning and execution |
+| `internal/store` | Sync database and backups |
+| `internal/services` | Logging, notifications, scanning, and systemd |
+| `internal/tui` | Bubble Tea dashboard |
+| `internal/utils` | Trash, restore, and path helpers |
+
+## Safety expectations
+
+gdrive-bisync handles user files. Prefer stopping safely over guessing.
+
+- Do not bypass deletion limits implicitly.
+- Do not permanently delete files when trash is available.
+- Keep writes atomic where possible.
+- Validate that paths remain inside the sync root.
+- Return and test errors from destructive operations.
+- Avoid logging private filenames in tests or examples.
+
+## Review
+
+Maintainers may request smaller commits, more tests, or a safer design. Address review comments on the same branch; the pull request updates automatically when you push new commits.
