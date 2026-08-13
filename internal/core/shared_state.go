@@ -9,6 +9,7 @@ import (
 
 type SharedState struct {
 	mutex              sync.RWMutex
+	activityMutex      sync.RWMutex
 	remoteFiles        types.DriveFileMap
 	metadata           map[string]*types.FileMetadata
 	pageToken          string
@@ -70,21 +71,21 @@ func (sharedState *SharedState) SnapshotRemoteFiles() types.DriveFileMap {
 }
 
 func (sharedState *SharedState) AddActiveDownload(path string) {
-	sharedState.mutex.Lock()
-	defer sharedState.mutex.Unlock()
+	sharedState.activityMutex.Lock()
+	defer sharedState.activityMutex.Unlock()
 	sharedState.activeDownloads[path] = time.Now()
 }
 
 func (sharedState *SharedState) RemoveActiveDownload(path string) {
-	sharedState.mutex.Lock()
-	defer sharedState.mutex.Unlock()
+	sharedState.activityMutex.Lock()
+	defer sharedState.activityMutex.Unlock()
 	delete(sharedState.activeDownloads, path)
 	sharedState.completedDownloads[path] = time.Now()
 }
 
 func (sharedState *SharedState) IsActiveDownload(path string) bool {
-	sharedState.mutex.RLock()
-	defer sharedState.mutex.RUnlock()
+	sharedState.activityMutex.RLock()
+	defer sharedState.activityMutex.RUnlock()
 	if _, active := sharedState.activeDownloads[path]; active {
 		return true
 	}

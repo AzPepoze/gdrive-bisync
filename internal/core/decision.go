@@ -63,6 +63,12 @@ func DetermineSyncAction(
 	// --- Deletion Logic ---
 	if hasSynced {
 		if localFile != nil && remoteFile == nil {
+			if lastSyncedInfo.RemoteMD5Checksum == "" {
+				// Local metadata alone is not proof that this file previously existed
+				// remotely. This can happen when an upload is interrupted before the
+				// remote result is persisted. Preserve the local file and retry upload.
+				return types.ActionUploadNew
+			}
 			if localChangedSinceSync(localFile, lastSyncedInfo) {
 				// Local changed while remote disappeared. Protect local changes.
 				return types.ActionUploadNew

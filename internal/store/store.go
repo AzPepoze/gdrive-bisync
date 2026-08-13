@@ -158,6 +158,28 @@ func (store *Store) SaveMetadata(changedMetadata map[string]*types.FileMetadata,
 	})
 }
 
+func (store *Store) ReplaceAllMetadata(metadata map[string]*types.FileMetadata) error {
+	return store.database.Update(func(transaction *bbolt.Tx) error {
+		if err := transaction.DeleteBucket(bucketMetadata); err != nil && err != bbolt.ErrBucketNotFound {
+			return err
+		}
+		bucket, err := transaction.CreateBucket(bucketMetadata)
+		if err != nil {
+			return err
+		}
+		for path, fileMetadata := range metadata {
+			encoded, err := json.Marshal(fileMetadata)
+			if err != nil {
+				return err
+			}
+			if err := bucket.Put([]byte(path), encoded); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (store *Store) SavePageToken(token string) error {
 	return store.database.Update(func(transaction *bbolt.Tx) error {
 		bucket := transaction.Bucket(bucketConfig)

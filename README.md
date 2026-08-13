@@ -55,7 +55,7 @@ yay -S gdrive-bisync
 ```
 
 ### Manual Build (From Source)
-Ensure you have Go 1.21+ installed:
+Ensure you have Go 1.25+ installed:
 ```bash
 git clone https://github.com/AzPepoze/gdrive-bisync
 cd gdrive-bisync
@@ -73,6 +73,21 @@ This creates the `gdrive-bisync` binary in the current directory.
 
 # Run the sync engine (foreground daemon)
 ./gdrive-bisync
+
+# Preview actions without changing local or remote files
+./gdrive-bisync --dry-run
+
+# Inspect and control the running service
+./gdrive-bisync --status
+./gdrive-bisync --pause
+./gdrive-bisync --resume
+
+# List or restore recoverable local deletions
+./gdrive-bisync --trash-list
+./gdrive-bisync --trash-restore ENTRY_ID
+
+# Open the Bubble Tea terminal manager
+./gdrive-bisync --tui
 
 # Reset local sync state and force a complete rescan
 ./gdrive-bisync --force
@@ -112,6 +127,11 @@ Place `config.json` inside your configurations folder (`~/.config/gdrive-bisync/
 | `WATCH_DEBOUNCE_DELAY` | integer | `5000` | Delay in milliseconds before uploading local changes (prevents rapid-save spam). |
 | `PERIODIC_SYNC_INTERVAL_MS` | integer | `60000` | How often the engine polls Google Drive for changes (default: 1 minute). |
 | `MAX_CONCURRENT_SCANS` | integer | `20` | Maximum parallel scans during remote checks. |
+| `MAX_CONCURRENT_DOWNLOADS` | integer | `20` | Maximum concurrent downloads. |
+| `MAX_CONCURRENT_UPLOADS` | integer | `10` | Maximum concurrent uploads. |
+| `MAX_DELETIONS_PER_SYNC` | integer | `20` | Abort before destructive reconciliation if more deletions are planned. `0` disables this limit. |
+| `MAX_DELETION_PERCENT` | number | `5` | Abort if deletions exceed this percentage of the local scan. `0` disables this limit. |
+| `DATABASE_BACKUP_COUNT` | integer | `5` | Number of rotating database backups to retain. |
 | `ignore` | string[] | `["(^\|.*[\\\\/])node_modules([\\\\/].*|$)"]` | Regex patterns of paths to ignore. |
 
 ---
@@ -122,8 +142,17 @@ Place `config.json` inside your configurations folder (`~/.config/gdrive-bisync/
 - **Local changes**: Monitored in real-time. When you modify or create a file locally, the filesystem watcher triggers an upload after the debounce delay.
 - **Remote changes**: Google Drive is polled periodically. Only files modified since the last check are updated to conserve network bandwidth.
 - **Self-trigger prevention**: The engine ignores local filesystem write/create events that are caused by its own downloads to prevent infinite upload/download loops.
+- **Single instance**: An OS file lock prevents a service and manual process from syncing the same state concurrently.
+- **Safe deletion**: Destructive changes are preflighted against count and percentage thresholds before reconciliation.
+- **Atomic downloads**: Downloads use a temporary sibling file and replace the destination only after a successful flush.
 
 ### 2. Databases & Files Created
 Inside your `LOCAL_SYNC_PATH`, the utility maintains:
-- `.gdrive-bisync.db`: SQLite database tracking remote files and cached metadata.
+- `.gdrive-bisync.db`: bbolt database tracking remote files and cached metadata.
 - `.gdrive-bisync-metadata.json`: Holds mapping state to verify whether files changed locally or remotely.
+- `.gdrive-bisync-backups/`: Rotating state backups created before startup.
+- `.trash/<date>/<entry-id>/`: Path-preserving recoverable payloads and manifests.
+
+Runtime status, pause state, and the instance lock live under the user configuration directory in `gdrive-bisync/runtime/`. `--allow-unsafe-deletes` bypasses deletion thresholds for one explicitly requested run.
+
+Console logs infer a category from the calling package. Category colors are generated dynamically from a stable hash, so new packages receive consistent colors without maintaining a category table. Progress animation is disabled automatically when output is not an interactive terminal.

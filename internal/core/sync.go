@@ -26,8 +26,14 @@ func Sync(
 	pageToken *string,
 	dbStore *store.Store,
 	sharedState *SharedState,
+	options SyncOptions,
 ) error {
 	ctx := context.Background()
+	if options.DryRun {
+		remoteFiles = cloneRemoteFiles(remoteFiles)
+		metadata = cloneMetadata(metadata)
+		dbStore = nil
+	}
 	resolvedLocalPath, err := ensureSyncRoot(cfg)
 	if err != nil {
 		return err
@@ -43,36 +49,45 @@ func Sync(
 	if err := refreshRemoteState(ctx, driveService, remoteFiles, metadata, cfg, pageToken, dbStore); err != nil {
 		return err
 	}
+	preflightTasks := collapseLocalDeletionSubtrees(planDeletionPreflight(localFiles, remoteFiles, metadata, cfg.IgnoreRegexps), localFiles)
+	if err := validateDeletionSafety(preflightTasks, len(localFiles), cfg, options.AllowUnsafeDeletes); err != nil {
+		return err
+	}
 
 	changedMetadata := make(map[string]*types.FileMetadata)
-	deletedMetadataPaths := make([]string, 0)
 	createdRemoteFolders := make(map[string]struct{})
 
-	typeConflictDeletedMetadata, err := resolveRemoteTypeConflicts(ctx, driveService, localFiles, remoteFiles, metadata)
+	_, err = resolveRemoteTypeConflicts(ctx, driveService, localFiles, remoteFiles, metadata, options.DryRun)
 	if err != nil {
 		return err
 	}
-	deletedMetadataPaths = append(deletedMetadataPaths, typeConflictDeletedMetadata...)
 
 	initializeFolderMetadata(localFiles, remoteFiles, metadata)
-	folderDeletedMetadata, err := reconcileFolders(ctx, driveService, resolvedLocalPath, localFiles, remoteFiles, metadata, cfg, dbStore, changedMetadata, createdRemoteFolders)
+	_, folderTasks, err := reconcileFolders(ctx, driveService, resolvedLocalPath, localFiles, remoteFiles, metadata, cfg, dbStore, changedMetadata, createdRemoteFolders, options.DryRun)
 	if err != nil {
 		return err
 	}
-	deletedMetadataPaths = append(deletedMetadataPaths, folderDeletedMetadata...)
 
 	tasks := planSyncTasks(localFiles, remoteFiles, metadata, cfg.IgnoreRegexps, createdRemoteFolders)
-
-	executor := NewExecutor(driveService, remoteFiles, metadata, cfg, resolvedLocalPath, sharedState)
-	if err := executor.ExecuteTasks(tasks); err != nil {
-		logger.Error("Sync tasks execution failed", "error", err)
+	tasks = append(tasks, folderTasks...)
+	tasks = collapseLocalDeletionSubtrees(tasks, localFiles)
+	if options.OnPlan != nil {
+		options.OnPlan(len(tasks))
+	}
+	if err := validateDeletionSafety(tasks, len(localFiles), cfg, options.AllowUnsafeDeletes); err != nil {
+		return err
 	}
 
-	if dbStore != nil {
+	executor := NewExecutor(driveService, remoteFiles, metadata, cfg, resolvedLocalPath, sharedState, options.DryRun)
+	if err := executor.ExecuteTasks(tasks); err != nil {
+		return fmt.Errorf("sync tasks execution failed: %w", err)
+	}
+
+	if dbStore != nil && !options.DryRun {
 		if err := dbStore.ReplaceAllRemoteFiles(remoteFiles); err != nil {
 			logger.Error("Failed to save remote files", "error", err)
 		}
-		if err := dbStore.SaveMetadata(metadata, deletedMetadataPaths); err != nil {
+		if err := dbStore.ReplaceAllMetadata(metadata); err != nil {
 			logger.Error("Failed to save metadata", "error", err)
 		}
 		if err := dbStore.SavePageToken(*pageToken); err != nil {
@@ -85,12 +100,142 @@ func Sync(
 	return nil
 }
 
+func collapseLocalDeletionSubtrees(tasks []types.SyncTask, localFiles types.LocalFileMap) []types.SyncTask {
+	deletedFolders := make([]string, 0)
+	for _, task := range tasks {
+		local := localFiles[task.FilePath]
+		if task.Action == types.ActionDeleteLocal && local != nil && local.IsDirectory {
+			deletedFolders = append(deletedFolders, task.FilePath)
+		}
+	}
+	if len(deletedFolders) == 0 {
+		return tasks
+	}
+	filtered := make([]types.SyncTask, 0, len(tasks))
+	for _, task := range tasks {
+		isDescendant := false
+		for _, folder := range deletedFolders {
+			if task.FilePath != folder && strings.HasPrefix(task.FilePath, folder+string(os.PathSeparator)) {
+				isDescendant = true
+				break
+			}
+		}
+		if !isDescendant {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
+}
+
+func planDeletionPreflight(
+	localFiles types.LocalFileMap,
+	remoteFiles types.DriveFileMap,
+	metadata map[string]*types.FileMetadata,
+	ignoreRegexps []*regexp.Regexp,
+) []types.SyncTask {
+	tasks := make([]types.SyncTask, 0)
+	seen := make(map[string]struct{})
+	for path, local := range localFiles {
+		if shouldIgnorePath(path, ignoreRegexps) {
+			continue
+		}
+		remote := remoteFiles[path]
+		if remote != nil && local.IsDirectory != remote.IsDirectory {
+			tasks = append(tasks, types.SyncTask{Action: types.ActionDeleteRemote, FilePath: path})
+			seen[path] = struct{}{}
+			continue
+		}
+		if remote == nil {
+			if local.IsDirectory {
+				if _, wasSynced := metadata[path]; wasSynced {
+					tasks = append(tasks, types.SyncTask{Action: types.ActionDeleteLocal, FilePath: path})
+					seen[path] = struct{}{}
+				}
+			} else if DetermineSyncAction(path, local, nil, metadata) == types.ActionDeleteLocal {
+				tasks = append(tasks, types.SyncTask{Action: types.ActionDeleteLocal, FilePath: path})
+				seen[path] = struct{}{}
+			}
+		}
+	}
+	for path, remote := range remoteFiles {
+		if _, exists := seen[path]; exists || shouldIgnorePath(path, ignoreRegexps) {
+			continue
+		}
+		if localFiles[path] == nil {
+			if remote.IsDirectory {
+				if shouldDeleteRemoteDirectory(path, localFiles, metadata) {
+					tasks = append(tasks, types.SyncTask{Action: types.ActionDeleteRemote, FilePath: path})
+				}
+			} else if DetermineSyncAction(path, nil, remote, metadata) == types.ActionDeleteRemote {
+				tasks = append(tasks, types.SyncTask{Action: types.ActionDeleteRemote, FilePath: path})
+			}
+		}
+	}
+	return tasks
+}
+
+func cloneRemoteFiles(source types.DriveFileMap) types.DriveFileMap {
+	clone := make(types.DriveFileMap, len(source))
+	for path, file := range source {
+		if file == nil {
+			continue
+		}
+		copy := *file
+		clone[path] = &copy
+	}
+	return clone
+}
+
+func cloneMetadata(source map[string]*types.FileMetadata) map[string]*types.FileMetadata {
+	clone := make(map[string]*types.FileMetadata, len(source))
+	for path, metadata := range source {
+		if metadata == nil {
+			continue
+		}
+		copy := *metadata
+		clone[path] = &copy
+	}
+	return clone
+}
+
+type SyncOptions struct {
+	DryRun             bool
+	AllowUnsafeDeletes bool
+	OnPlan             func(taskCount int)
+}
+
+func validateDeletionSafety(tasks []types.SyncTask, localFileCount int, cfg *config.Config, allowUnsafe bool) error {
+	if allowUnsafe {
+		return nil
+	}
+	deletions := 0
+	for _, task := range tasks {
+		if task.Action == types.ActionDeleteLocal || task.Action == types.ActionDeleteRemote {
+			deletions++
+		}
+	}
+	if deletions == 0 {
+		return nil
+	}
+	if cfg.MaxDeletionsPerSync > 0 && deletions > cfg.MaxDeletionsPerSync {
+		return fmt.Errorf("deletion safety threshold exceeded: planned %d deletions, maximum is %d", deletions, cfg.MaxDeletionsPerSync)
+	}
+	if cfg.MaxDeletionPercent > 0 && localFileCount > 0 {
+		percent := float64(deletions) * 100 / float64(localFileCount)
+		if percent > cfg.MaxDeletionPercent {
+			return fmt.Errorf("deletion safety threshold exceeded: %.1f%% planned, maximum is %.1f%%", percent, cfg.MaxDeletionPercent)
+		}
+	}
+	return nil
+}
+
 func resolveRemoteTypeConflicts(
 	ctx context.Context,
 	driveService api.DriveClient,
 	localFiles types.LocalFileMap,
 	remoteFiles types.DriveFileMap,
 	metadata map[string]*types.FileMetadata,
+	dryRun bool,
 ) ([]string, error) {
 	deletedMetadataPaths := make([]string, 0)
 
@@ -107,7 +252,9 @@ func resolveRemoteTypeConflicts(
 		}
 
 		if remote.ID != "" {
-			if err := driveService.TrashRemoteFile(ctx, remote.ID); err != nil {
+			if dryRun {
+				logger.Info("[DRY-RUN] TRASH_REMOTE_TYPE_CONFLICT", "path", path)
+			} else if err := driveService.TrashRemoteFile(ctx, remote.ID); err != nil {
 				return deletedMetadataPaths, fmt.Errorf("failed to reconcile path type change for %s: %w", path, err)
 			}
 		}
@@ -240,18 +387,14 @@ func applyChanges(changes []*drive.Change, remoteFiles types.DriveFileMap, metad
 			if exists {
 				logger.Debug("Applying remote deletion", "path", path)
 				delete(remoteFiles, path)
-				delete(metadata, path)
 				delete(idToPath, change.FileId)
 				deletedPaths = append(deletedPaths, path)
-				deletedMetadataPaths = append(deletedMetadataPaths, path)
 
 				childPrefix := path + string(os.PathSeparator)
 				for key := range remoteFiles {
 					if strings.HasPrefix(key, childPrefix) {
 						delete(remoteFiles, key)
-						delete(metadata, key)
 						deletedPaths = append(deletedPaths, key)
-						deletedMetadataPaths = append(deletedMetadataPaths, key)
 					}
 				}
 			}

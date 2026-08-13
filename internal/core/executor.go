@@ -26,6 +26,7 @@ type Executor struct {
 	metaMu       sync.Mutex
 	localPath    string
 	sharedState  *SharedState
+	dryRun       bool
 }
 
 func NewExecutor(
@@ -35,6 +36,7 @@ func NewExecutor(
 	cfg *config.Config,
 	localPath string,
 	sharedState *SharedState,
+	dryRun bool,
 ) *Executor {
 	return &Executor{
 		driveService: driveService,
@@ -43,6 +45,7 @@ func NewExecutor(
 		cfg:          cfg,
 		localPath:    localPath,
 		sharedState:  sharedState,
+		dryRun:       dryRun,
 	}
 }
 
@@ -53,9 +56,20 @@ func (executor *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 	}
 
 	logger.Info(fmt.Sprintf("Executing %d sync tasks...", len(tasks)))
+	if executor.dryRun {
+		for index, task := range tasks {
+			logger.Info(fmt.Sprintf("[DRY-RUN %d/%d] %s: %s", index+1, len(tasks), task.Action.String(), task.FilePath))
+		}
+		return nil
+	}
 
 	group, ctx := errgroup.WithContext(context.Background())
-	group.SetLimit(executor.cfg.MaxConcurrentDownloads)
+	downloadSlots := make(chan struct{}, executor.cfg.MaxConcurrentDownloads)
+	uploadSlots := make(chan struct{}, executor.cfg.MaxConcurrentUploads)
+	deletionTasks := make([]struct {
+		task  types.SyncTask
+		index int
+	}, 0)
 
 	for index, task := range tasks {
 		taskCopy := task
@@ -64,28 +78,63 @@ func (executor *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 		switch task.Action {
 		case types.ActionDownloadNew, types.ActionDownloadUpdate:
 			group.Go(func() error {
+				if err := acquireTransferSlot(ctx, downloadSlots); err != nil {
+					return err
+				}
+				defer func() { <-downloadSlots }()
 				return executor.downloadWithRetry(ctx, taskCopy, taskIndex, len(tasks))
 			})
 
 		case types.ActionUploadNew, types.ActionUploadUpdate, types.ActionUploadConflict:
 			group.Go(func() error {
+				if err := acquireTransferSlot(ctx, uploadSlots); err != nil {
+					return err
+				}
+				defer func() { <-uploadSlots }()
 				return executor.uploadWithRetry(ctx, taskCopy, taskIndex, len(tasks))
 			})
 
 		case types.ActionDeleteLocal:
-			executor.handleDeleteLocal(taskCopy, taskIndex, len(tasks))
+			deletionTasks = append(deletionTasks, struct {
+				task  types.SyncTask
+				index int
+			}{taskCopy, taskIndex})
 
 		case types.ActionDeleteRemote:
-			executor.handleDeleteRemote(taskCopy, taskIndex, len(tasks))
+			deletionTasks = append(deletionTasks, struct {
+				task  types.SyncTask
+				index int
+			}{taskCopy, taskIndex})
 		}
 	}
 
-	return group.Wait()
+	if err := group.Wait(); err != nil {
+		return err
+	}
+	for _, deletion := range deletionTasks {
+		if deletion.task.Action == types.ActionDeleteLocal {
+			executor.handleDeleteLocal(deletion.task, deletion.index, len(tasks))
+		} else {
+			executor.handleDeleteRemote(deletion.task, deletion.index, len(tasks))
+		}
+	}
+	return nil
+}
+
+func acquireTransferSlot(ctx context.Context, slots chan struct{}) error {
+	select {
+	case slots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (executor *Executor) downloadWithRetry(ctx context.Context, task types.SyncTask, index, total int) error {
 	localFilePath := filepath.Join(executor.localPath, task.FilePath)
+	executor.metaMu.Lock()
 	remoteFile := executor.remoteFiles[task.FilePath]
+	executor.metaMu.Unlock()
 
 	if executor.sharedState != nil {
 		executor.sharedState.AddActiveDownload(task.FilePath)
@@ -136,9 +185,10 @@ func (executor *Executor) downloadWithRetry(ctx context.Context, task types.Sync
 func (executor *Executor) uploadWithRetry(ctx context.Context, task types.SyncTask, index, total int) error {
 	logger.Info(fmt.Sprintf("[%d/%d] %s: %s", index, total, task.Action.String(), task.FilePath))
 	localFilePath := filepath.Join(executor.localPath, task.FilePath)
+	executor.metaMu.Lock()
 	remoteFile := executor.remoteFiles[task.FilePath]
-
 	parentFolderID, ok := resolveRemoteParentFolderID(task.FilePath, executor.remoteFiles, executor.cfg.RemoteFolderID)
+	executor.metaMu.Unlock()
 	if !ok {
 		logger.Error("Could not find remote parent folder", "path", task.FilePath)
 		return nil
@@ -201,7 +251,9 @@ func (executor *Executor) handleDeleteLocal(task types.SyncTask, index, total in
 
 func (executor *Executor) handleDeleteRemote(task types.SyncTask, index, total int) {
 	logger.Info(fmt.Sprintf("[%d/%d] %s: %s", index, total, task.Action.String(), task.FilePath))
+	executor.metaMu.Lock()
 	remoteFile := executor.remoteFiles[task.FilePath]
+	executor.metaMu.Unlock()
 
 	if remoteFile != nil && remoteFile.ID != "" {
 		if err := executor.driveService.TrashRemoteFile(context.Background(), remoteFile.ID); err != nil {

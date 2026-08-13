@@ -219,7 +219,7 @@ func TestSync_LocalRestructureWithDeletedSiblingNote_ConvergesToLocalShape(t *te
 	cfg := testConfig(root)
 	pageToken := "current-token"
 
-	if err := Sync(fakeDrive, remoteFiles, metadata, cfg, &pageToken, nil, nil); err != nil {
+	if err := Sync(fakeDrive, remoteFiles, metadata, cfg, &pageToken, nil, nil, SyncOptions{}); err != nil {
 		t.Fatalf("sync failed: %v", err)
 	}
 
@@ -262,7 +262,7 @@ func TestSync_RemoteFileReplacedByLocalFolder_RecreatesFolderAndUploadsChildren(
 	cfg := testConfig(root)
 	pageToken := "token-1"
 
-	if err := Sync(fakeDrive, remoteFiles, metadata, cfg, &pageToken, nil, nil); err != nil {
+	if err := Sync(fakeDrive, remoteFiles, metadata, cfg, &pageToken, nil, nil, SyncOptions{}); err != nil {
 		t.Fatalf("sync failed: %v", err)
 	}
 
@@ -294,7 +294,7 @@ func TestSync_RemoteFolderReplacedByLocalFile_RemovesChildrenAndUploadsFile(t *t
 	cfg := testConfig(root)
 	pageToken := "token-1"
 
-	if err := Sync(fakeDrive, remoteFiles, metadata, cfg, &pageToken, nil, nil); err != nil {
+	if err := Sync(fakeDrive, remoteFiles, metadata, cfg, &pageToken, nil, nil, SyncOptions{}); err != nil {
 		t.Fatalf("sync failed: %v", err)
 	}
 

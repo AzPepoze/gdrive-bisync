@@ -73,6 +73,27 @@ func TestDetermineSyncAction_WhenRemoteMissingAndLocalChanged_UploadsNew(t *test
 	}
 }
 
+func TestDetermineSyncAction_WhenRemoteWasNeverPersisted_UploadsLocalFile(t *testing.T) {
+	now := time.Now()
+	metadata := map[string]*types.FileMetadata{
+		"new-file.txt": {
+			LocalMD5Checksum: "local-md5",
+			LocalModTime:     now,
+		},
+	}
+
+	action := DetermineSyncAction(
+		"new-file.txt",
+		&types.LocalFile{Path: "new-file.txt", MD5Checksum: "local-md5", ModTime: now},
+		nil,
+		metadata,
+	)
+
+	if action != types.ActionUploadNew {
+		t.Fatalf("expected %v, got %v", types.ActionUploadNew, action)
+	}
+}
+
 func TestDetermineSyncAction_WhenBothChanged_PreservesLocalWinsPolicy(t *testing.T) {
 	now := time.Now()
 	metadata := map[string]*types.FileMetadata{

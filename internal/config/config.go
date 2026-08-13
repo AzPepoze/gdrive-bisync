@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,9 @@ var (
 		MaxConcurrentDownloads: 20,
 		MaxConcurrentUploads:   10,
 		MaxRetries:             10,
+		MaxDeletionsPerSync:    20,
+		MaxDeletionPercent:     5,
+		DatabaseBackupCount:    5,
 		ShowLogs:               false,
 		Ignore:                 []string{`(^|.*[\\/])node_modules([\\/].*|$)`},
 	}
@@ -40,6 +44,9 @@ type Config struct {
 	MaxConcurrentDownloads int      `json:"MAX_CONCURRENT_DOWNLOADS"`
 	MaxConcurrentUploads   int      `json:"MAX_CONCURRENT_UPLOADS"`
 	MaxRetries             int      `json:"MAX_RETRIES"`
+	MaxDeletionsPerSync    int      `json:"MAX_DELETIONS_PER_SYNC"`
+	MaxDeletionPercent     float64  `json:"MAX_DELETION_PERCENT"`
+	DatabaseBackupCount    int      `json:"DATABASE_BACKUP_COUNT"`
 	ShowLogs               bool     `json:"SHOW_LOGS"`
 	IgnoreRegexps          []*regexp.Regexp
 }
@@ -83,6 +90,8 @@ func Load() (*Config, error) {
 	}
 
 	config.Ignore = append(config.Ignore, `(^|.*[\\/])\.trash([\\/].*|$)`)
+	config.Ignore = append(config.Ignore, `(^|.*[\\/])\.gdrive-bisync-backups([\\/].*|$)`)
+	config.Ignore = append(config.Ignore, `(^|.*[\\/])\.gdrive-download-.*\.partial$`)
 
 	logger.Info("Final Ignore Patterns", "count", len(config.Ignore), "list", config.Ignore)
 
@@ -95,6 +104,31 @@ func Load() (*Config, error) {
 		}
 		config.IgnoreRegexps = append(config.IgnoreRegexps, re)
 	}
+	if err := config.Validate(); err != nil {
+		return &config, err
+	}
 
 	return &config, nil
+}
+
+func (config Config) Validate() error {
+	if config.WatchDebounceDelay < 0 {
+		return fmt.Errorf("WATCH_DEBOUNCE_DELAY must not be negative")
+	}
+	if config.PeriodicSyncIntervalMs <= 0 {
+		return fmt.Errorf("PERIODIC_SYNC_INTERVAL_MS must be greater than zero")
+	}
+	if config.MaxConcurrentScans <= 0 || config.MaxConcurrentDownloads <= 0 || config.MaxConcurrentUploads <= 0 {
+		return fmt.Errorf("concurrency limits must be greater than zero")
+	}
+	if config.MaxRetries <= 0 {
+		return fmt.Errorf("MAX_RETRIES must be greater than zero")
+	}
+	if config.MaxDeletionsPerSync < 0 || config.MaxDeletionPercent < 0 || config.MaxDeletionPercent > 100 {
+		return fmt.Errorf("deletion thresholds must be non-negative and percentage must not exceed 100")
+	}
+	if config.DatabaseBackupCount < 0 {
+		return fmt.Errorf("DATABASE_BACKUP_COUNT must not be negative")
+	}
+	return nil
 }

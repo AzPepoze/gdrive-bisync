@@ -3,10 +3,13 @@ package logger
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,8 +22,10 @@ var (
 	outputMu           sync.Mutex
 	lastProgressLen    int
 	currentProgressMsg string
+	progressVisible    bool
 
 	consoleLevelVar = &slog.LevelVar{}
+	categoryColors  sync.Map
 )
 
 func GetLogDir() string {
@@ -72,12 +77,18 @@ func (h *ConsoleHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	msg := r.Message
 	attrs := ""
+	category := "APP"
 	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "category" {
+			category = strings.ToUpper(a.Value.String())
+			return true
+		}
 		attrs += fmt.Sprintf(" %s=%v", a.Key, a.Value.Any())
 		return true
 	})
 
-	_, err := fmt.Fprintf(h.w, "%s [%s] %s%s\n", t, levelStr, msg, attrs)
+	categoryLabel := fmt.Sprintf("\033[38;5;%dm%-10s\033[0m", categoryColor(category), category)
+	_, err := fmt.Fprintf(h.w, "%s [%s] [%s] %s%s\n", t, levelStr, categoryLabel, msg, attrs)
 
 	if currentProgressMsg != "" {
 		fmt.Fprintf(h.w, "\r\033[36m[SCAN]\033[0m %s", currentProgressMsg)
@@ -171,6 +182,11 @@ func Init(showLogs bool) {
 	} else {
 		consoleLevelVar.Set(slog.LevelError + 100)
 	}
+	outputMu.Lock()
+	if info, err := os.Stdout.Stat(); err == nil {
+		progressVisible = showLogs && info.Mode()&os.ModeCharDevice != 0
+	}
+	outputMu.Unlock()
 }
 
 func Close() {
@@ -182,6 +198,11 @@ func Close() {
 func UpdateStatus(msg string) {
 	outputMu.Lock()
 	defer outputMu.Unlock()
+	if !progressVisible {
+		currentProgressMsg = ""
+		lastProgressLen = 0
+		return
+	}
 
 	if lastProgressLen > 0 {
 		fmt.Print("\r\033[2K")
@@ -204,21 +225,68 @@ func UpdateStatus(msg string) {
 }
 
 func Info(msg string, args ...any) {
-	if Log == nil { Init(false) }
-	Log.Info(msg, args...)
+	logWithCategory(slog.LevelInfo, callerCategory(), msg, args...)
 }
 
 func Error(msg string, args ...any) {
-	if Log == nil { Init(false) }
-	Log.Error(msg, args...)
+	logWithCategory(slog.LevelError, callerCategory(), msg, args...)
 }
 
 func Warn(msg string, args ...any) {
-	if Log == nil { Init(false) }
-	Log.Warn(msg, args...)
+	logWithCategory(slog.LevelWarn, callerCategory(), msg, args...)
 }
 
 func Debug(msg string, args ...any) {
-	if Log == nil { Init(false) }
-	Log.Debug(msg, args...)
+	logWithCategory(slog.LevelDebug, callerCategory(), msg, args...)
+}
+
+func InfoCategory(category string, msg string, args ...any) {
+	logWithCategory(slog.LevelInfo, category, msg, args...)
+}
+
+func WarnCategory(category string, msg string, args ...any) {
+	logWithCategory(slog.LevelWarn, category, msg, args...)
+}
+
+func ErrorCategory(category string, msg string, args ...any) {
+	logWithCategory(slog.LevelError, category, msg, args...)
+}
+
+func logWithCategory(level slog.Level, category string, msg string, args ...any) {
+	if Log == nil {
+		Init(false)
+	}
+	attributes := make([]any, 0, len(args)+2)
+	attributes = append(attributes, "category", strings.ToUpper(category))
+	attributes = append(attributes, args...)
+	Log.Log(context.Background(), level, msg, attributes...)
+}
+
+func callerCategory() string {
+	_, file, _, ok := runtime.Caller(2)
+	if !ok {
+		return "APP"
+	}
+	slashPath := filepath.ToSlash(file)
+	if marker := "/internal/"; strings.Contains(slashPath, marker) {
+		remainder := strings.SplitN(slashPath, marker, 2)[1]
+		return strings.ToUpper(strings.SplitN(remainder, "/", 2)[0])
+	}
+	if marker := "/cmd/"; strings.Contains(slashPath, marker) {
+		return "CMD"
+	}
+	return strings.ToUpper(filepath.Base(filepath.Dir(file)))
+}
+
+func categoryColor(category string) uint32 {
+	category = strings.ToUpper(category)
+	if cached, ok := categoryColors.Load(category); ok {
+		return cached.(uint32)
+	}
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(category))
+	// Use the 6×6×6 terminal color cube, avoiding low-contrast system colors.
+	color := uint32(16 + hash.Sum32()%216)
+	categoryColors.Store(category, color)
+	return color
 }

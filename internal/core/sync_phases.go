@@ -148,8 +148,10 @@ func reconcileFolders(
 	dbStore *store.Store,
 	changedMetadata map[string]*types.FileMetadata,
 	createdRemoteFolders map[string]struct{},
-) ([]string, error) {
+	dryRun bool,
+) ([]string, []types.SyncTask, error) {
 	deletedMetadataPaths := make([]string, 0)
+	folderTasks := make([]types.SyncTask, 0)
 	localFolders := localDirectories(localFiles)
 
 	for _, folder := range localFolders {
@@ -171,20 +173,7 @@ func reconcileFolders(
 				continue
 			}
 
-			logger.Info("Folder deleted remotely. Moving to trash.", "path", folder.Path)
-			fullPath := filepath.Join(resolvedLocalPath, folder.Path)
-			if err := utils.MoveToTrash(resolvedLocalPath, fullPath); err != nil {
-				logger.Error("Failed to move local folder to trash", "path", folder.Path, "error", err)
-			} else {
-				delete(metadata, folder.Path)
-				deletedMetadataPaths = append(deletedMetadataPaths, folder.Path)
-				for key := range metadata {
-					if strings.HasPrefix(key, childPrefix) {
-						delete(metadata, key)
-						deletedMetadataPaths = append(deletedMetadataPaths, key)
-					}
-				}
-			}
+			folderTasks = append(folderTasks, types.SyncTask{Action: types.ActionDeleteLocal, FilePath: folder.Path})
 			continue
 		}
 
@@ -195,6 +184,10 @@ func reconcileFolders(
 		}
 
 		logger.Info("Creating remote folder", "path", folder.Path)
+		if dryRun {
+			logger.Info("[DRY-RUN] CREATE_REMOTE_FOLDER", "path", folder.Path)
+			continue
+		}
 		newDriveFile, err := driveService.CreateFolder(ctx, api.CreateFolderRequest{
 			ParentFolderID: parentFolderID,
 			FolderName:     filepath.Base(folder.Path),
@@ -216,7 +209,7 @@ func reconcileFolders(
 		createdRemoteFolders[folder.Path] = struct{}{}
 	}
 
-	return deletedMetadataPaths, nil
+	return deletedMetadataPaths, folderTasks, nil
 }
 
 func planSyncTasks(

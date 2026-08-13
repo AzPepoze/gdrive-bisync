@@ -10,6 +10,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"gdrive-bisync/internal/api"
+	"gdrive-bisync/internal/appstate"
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/services/logger"
 	"gdrive-bisync/internal/store"
@@ -22,6 +23,7 @@ func WatchLocalFiles(
 	sharedState *SharedState,
 	cfg *config.Config,
 	dbStore *store.Store,
+	pauseFile string,
 ) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -64,6 +66,9 @@ func WatchLocalFiles(
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return
+			}
+			if pauseFile != "" && appstate.IsPaused(pauseFile) {
+				continue
 			}
 
 			relativePath, err := filepath.Rel(localPath, event.Name)

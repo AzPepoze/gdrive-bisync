@@ -11,8 +11,9 @@ func TestDetermineTaskAction_WhenFileIsUnderNewRemoteFolder_UploadsNew(t *testin
 	now := time.Now()
 	metadata := map[string]*types.FileMetadata{
 		"Server/IP.md": {
-			LocalMD5Checksum: "same-md5",
-			LocalModTime:     now,
+			RemoteMD5Checksum: "same-md5",
+			LocalMD5Checksum:  "same-md5",
+			LocalModTime:      now,
 		},
 	}
 
@@ -33,8 +34,9 @@ func TestDetermineTaskAction_WhenFileIsNotUnderNewRemoteFolder_KeepsDeleteLocal(
 	now := time.Now()
 	metadata := map[string]*types.FileMetadata{
 		"Server/IP.md": {
-			LocalMD5Checksum: "same-md5",
-			LocalModTime:     now,
+			RemoteMD5Checksum: "same-md5",
+			LocalMD5Checksum:  "same-md5",
+			LocalModTime:      now,
 		},
 	}
 

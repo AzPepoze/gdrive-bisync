@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"google.golang.org/api/drive/v3"
 
@@ -24,17 +25,30 @@ func (s *DriveService) DownloadFile(ctx context.Context, request DownloadFileReq
 	}
 	defer httpResponse.Body.Close()
 
-	output, err := os.Create(request.DestinationPath)
+	temporary, err := os.CreateTemp(filepath.Dir(request.DestinationPath), ".gdrive-download-*.partial")
 	if err != nil {
 		return err
 	}
-	defer output.Close()
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
 
-	written, err := io.Copy(output, httpResponse.Body)
-	if err == nil {
-		logger.Debug("File downloaded successfully", "size", fmt.Sprintf("%.2f KB", float64(written)/1024), "destination", request.DestinationPath)
+	written, err := io.Copy(temporary, httpResponse.Body)
+	if err != nil {
+		temporary.Close()
+		return err
 	}
-	return err
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := replaceFile(temporaryPath, request.DestinationPath); err != nil {
+		return err
+	}
+	logger.Debug("File downloaded successfully", "size", fmt.Sprintf("%.2f KB", float64(written)/1024), "destination", request.DestinationPath)
+	return nil
 }
 
 func (s *DriveService) UploadOrUpdateFile(ctx context.Context, request UploadFileRequest) (*types.DriveFile, error) {
