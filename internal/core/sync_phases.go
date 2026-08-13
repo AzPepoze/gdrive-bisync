@@ -222,6 +222,10 @@ func planSyncTasks(
 		remote := remoteFiles[pathStr]
 		isDir := (local != nil && local.IsDirectory) || (remote != nil && remote.IsDirectory)
 		if isDir {
+			if local == nil && remote != nil && !shouldDeleteRemoteDirectory(pathStr, localFiles, metadata) {
+				tasks = append(tasks, types.SyncTask{Action: types.ActionCreateLocalFolder, FilePath: pathStr})
+				continue
+			}
 			if local == nil && remote != nil && shouldDeleteRemoteDirectory(pathStr, localFiles, metadata) {
 				tasks = append(tasks, types.SyncTask{Action: types.ActionDeleteRemote, FilePath: pathStr})
 			}

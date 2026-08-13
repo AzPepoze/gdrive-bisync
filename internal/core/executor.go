@@ -105,6 +105,9 @@ func (executor *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 				task  types.SyncTask
 				index int
 			}{taskCopy, taskIndex})
+
+		case types.ActionCreateLocalFolder:
+			group.Go(func() error { return executor.createLocalFolder(taskCopy, taskIndex, len(tasks)) })
 		}
 	}
 
@@ -122,6 +125,21 @@ func (executor *Executor) ExecuteTasks(tasks []types.SyncTask) error {
 			}
 		}
 	}
+	return nil
+}
+
+func (executor *Executor) createLocalFolder(task types.SyncTask, index, total int) error {
+	logger.Info(fmt.Sprintf("[%d/%d] %s: %s", index, total, task.Action.String(), task.FilePath))
+	localFolderPath, err := localPathWithinRoot(executor.localPath, task.FilePath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(localFolderPath, 0755); err != nil {
+		return fmt.Errorf("create local folder %s: %w", task.FilePath, err)
+	}
+	executor.metaMu.Lock()
+	executor.metadata[task.FilePath] = &types.FileMetadata{}
+	executor.metaMu.Unlock()
 	return nil
 }
 

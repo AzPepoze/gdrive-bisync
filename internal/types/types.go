@@ -39,6 +39,7 @@ const (
 	ActionUploadConflict
 	ActionDeleteLocal
 	ActionDeleteRemote
+	ActionCreateLocalFolder
 	ActionSkipIdentical
 	ActionSkipNoChange
 )
@@ -52,6 +53,7 @@ func (s SyncAction) String() string {
 		"UPLOAD_CONFLICT",
 		"DELETE_LOCAL",
 		"DELETE_REMOTE",
+		"CREATE_LOCAL_FOLDER",
 		"SKIP_IDENTICAL",
 		"SKIP_NO_CHANGE",
 	}[s]

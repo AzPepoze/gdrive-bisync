@@ -239,6 +239,8 @@ flowchart TD
 
 Downloads are written to a temporary sibling, flushed, and atomically renamed. Watcher events produced by active downloads are suppressed to prevent upload/download loops.
 
+Remote-only empty folders are created locally as explicit `CREATE_LOCAL_FOLDER` actions, so directory structure converges even when a Drive folder contains no files.
+
 ## Safety model
 
 ```mermaid

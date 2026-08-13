@@ -112,3 +112,20 @@ func TestShouldDeleteRemoteDirectory_WhenLocalChildrenExist_ReturnsFalse(t *test
 		t.Fatal("expected remote directory to remain while local descendants still exist")
 	}
 }
+
+func TestPlanSyncTasksCreatesMissingLocalRemoteFolder(t *testing.T) {
+	remoteFiles := types.DriveFileMap{"Yo": {ID: "folder-id", Path: "Yo", IsDirectory: true}}
+	tasks := planSyncTasks(types.LocalFileMap{}, remoteFiles, map[string]*types.FileMetadata{}, nil, map[string]struct{}{})
+	if len(tasks) != 1 || tasks[0].Action != types.ActionCreateLocalFolder || tasks[0].FilePath != "Yo" {
+		t.Fatalf("unexpected tasks: %#v", tasks)
+	}
+}
+
+func TestPlanSyncTasksDoesNotRecreatePreviouslyDeletedLocalFolder(t *testing.T) {
+	remoteFiles := types.DriveFileMap{"Yo": {ID: "folder-id", Path: "Yo", IsDirectory: true}}
+	metadata := map[string]*types.FileMetadata{"Yo": {}}
+	tasks := planSyncTasks(types.LocalFileMap{}, remoteFiles, metadata, nil, map[string]struct{}{})
+	if len(tasks) != 1 || tasks[0].Action != types.ActionDeleteRemote {
+		t.Fatalf("unexpected tasks: %#v", tasks)
+	}
+}

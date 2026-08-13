@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -67,5 +69,21 @@ func TestRemoteFolderDeletionRemovesSlashAndBackslashDescendants(t *testing.T) {
 	}
 	if len(remoteFiles) != 0 || len(metadata) != 0 {
 		t.Fatalf("folder descendants remain: remote=%v metadata=%v", remoteFiles, metadata)
+	}
+}
+
+func TestExecutorCreatesMissingLocalFolder(t *testing.T) {
+	root := t.TempDir()
+	metadata := map[string]*types.FileMetadata{}
+	executor := NewExecutor(&fakeDriveService{}, types.DriveFileMap{}, metadata, &config.Config{MaxConcurrentDownloads: 1, MaxConcurrentUploads: 1}, root, nil, false)
+	if err := executor.ExecuteTasks([]types.SyncTask{{Action: types.ActionCreateLocalFolder, FilePath: "Yo"}}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, "Yo"))
+	if err != nil || !info.IsDir() {
+		t.Fatalf("local folder was not created: info=%v err=%v", info, err)
+	}
+	if metadata["Yo"] == nil {
+		t.Fatal("folder metadata was not recorded")
 	}
 }
