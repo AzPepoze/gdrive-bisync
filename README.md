@@ -1,44 +1,102 @@
 # gdrive-bisync
 
-A safety-focused bidirectional synchronizer between a local directory and Google Drive.
+Keep a local folder and Google Drive synchronized in both directions, with a terminal dashboard and safeguards against accidental deletion.
 
-```mermaid
-flowchart LR
-    Local[Local folder] <-->|upload / download| Engine[gdrive-bisync]
-    Engine <-->|Changes API| Drive[Google Drive]
-    Engine --> State[(bbolt state)]
-    Engine --> Trash[Recoverable trash]
-    CLI[CLI] --> Control[Status & controls]
-    TUI[Bubble Tea TUI] --> Control
-    Control --> Engine
+```text
+Local folder  ⇄  gdrive-bisync  ⇄  Google Drive
+                       │
+               Terminal dashboard
 ```
 
-## Highlights
+## What it does
 
-| Area | Capability |
+| Feature | What you get |
 |---|---|
-| Sync | Real-time local watcher and incremental Google Drive polling |
-| Safety | Deletion preflight, count/percentage limits, and dry-run previews |
-| Recovery | Path-preserving local trash with indexed restore |
-| Reliability | Atomic downloads, rotating database backups, and single-instance locking |
-| Management | Status, pause/resume, CLI trash management, and Bubble Tea TUI |
-| Diagnostics | Structured categories with stable hash-generated terminal colors |
-| Platforms | Linux and Windows |
+| Two-way sync | Upload local changes and download Drive changes automatically |
+| Live updates | Watch local files and periodically check Google Drive |
+| Safe deletion | Preview changes, limit mass deletion, and recover locally deleted items |
+| Reliable transfers | Atomic downloads, retries, database backups, and single-process locking |
+| Terminal dashboard | View health, progress, recent activity, logs, trash, and safety status |
+| Notifications | Receive desktop alerts for important failures and recovery on Linux |
+
+gdrive-bisync works in the background as a systemd user service on Linux. Running `gdrive-bisync` in a terminal opens the Bubble Tea dashboard instead of starting a second sync process.
 
 ## Quick start
 
-| Step | Action | Command or location |
-|---:|---|---|
-| 1 | Enable Google Drive API and create an OAuth Desktop client | [Google Cloud Console](https://console.cloud.google.com/) |
-| 2 | Save the downloaded OAuth file as `credentials.json` | Linux: `~/.config/gdrive-bisync/config/credentials.json` |
-| 3 | Create `config.json` beside it | See the example below |
-| 4 | Authorize the application | `gdrive-bisync --setup` |
-| 5 | Preview the first sync | `gdrive-bisync --dry-run` |
-| 6 | Start syncing | `gdrive-bisync` |
+```bash
+# 1. Authenticate after adding credentials.json
+gdrive-bisync --setup
 
-Windows uses `%USERPROFILE%\.config\gdrive-bisync\config\` for configuration.
+# 2. Preview the first synchronization
+gdrive-bisync --dry-run
 
-Minimal `config.json`:
+# 3. Install and start the background service
+gdrive-bisync --install-service
+systemctl --user enable --now gdrive-bisync
+
+# 4. Open the dashboard
+gdrive-bisync
+```
+
+The default setup synchronizes your entire Google Drive with `~/GoogleDrive`.
+
+## Installation
+
+### Arch Linux
+
+```bash
+paru -S gdrive-bisync
+```
+
+or:
+
+```bash
+yay -S gdrive-bisync
+```
+
+### Build from source
+
+Go 1.25 or newer is required.
+
+```bash
+git clone https://github.com/AzPepoze/gdrive-bisync.git
+cd gdrive-bisync
+go build -o gdrive-bisync ./cmd/gdrive-bisync
+sudo install -m 0755 gdrive-bisync /usr/local/bin/gdrive-bisync
+```
+
+Development and release instructions are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Getting started
+
+### 1. Create Google OAuth credentials
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create or select a project.
+3. Enable the Google Drive API.
+4. Open **APIs & Services → Credentials**.
+5. Create an **OAuth client ID** with application type **Desktop app**.
+6. Download the JSON credentials file.
+
+### 2. Create the configuration directory
+
+Linux:
+
+```bash
+mkdir -p ~/.config/gdrive-bisync/config
+```
+
+Windows PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\.config\gdrive-bisync\config"
+```
+
+Rename the downloaded OAuth file to `credentials.json` and place it inside that directory.
+
+### 3. Create `config.json`
+
+Place `config.json` beside `credentials.json`:
 
 ```json
 {
@@ -47,152 +105,186 @@ Minimal `config.json`:
 }
 ```
 
-To sync a specific Drive folder, copy its ID from a URL such as:
+`root` means your entire **My Drive**. To sync only one Drive folder, copy the folder ID from its URL:
 
 ```text
 https://drive.google.com/drive/folders/YOUR_FOLDER_ID
 ```
 
-## Installation
+### 4. Authenticate
 
-| Method | Commands |
+```bash
+gdrive-bisync --setup
+```
+
+Your browser opens for Google authorization. The resulting token stays in your local configuration directory.
+
+### 5. Preview before syncing
+
+```bash
+gdrive-bisync --dry-run
+```
+
+Review the planned uploads, downloads, folder creation, and deletions. A dry run does not change local files, Drive files, or the sync database.
+
+### 6. Run in the background
+
+```bash
+gdrive-bisync --install-service
+systemctl --user enable --now gdrive-bisync
+```
+
+Confirm that it is healthy:
+
+```bash
+gdrive-bisync --status
+```
+
+## Everyday usage
+
+### Terminal dashboard
+
+```bash
+gdrive-bisync
+```
+
+The dashboard contains observability and sync controls only. Use your operating system’s file explorer to browse files.
+
+| Page | Information |
 |---|---|
-| Arch Linux (paru) | `paru -S gdrive-bisync` |
-| Arch Linux (yay) | `yay -S gdrive-bisync` |
-| Source | `git clone https://github.com/AzPepoze/gdrive-bisync`<br>`cd gdrive-bisync`<br>`make` |
+| Overview | Service health, last/next sync, progress, and action totals |
+| Activity | Recent uploads, downloads, folder actions, retries, and failures |
+| Logs | Live categorized logs with filtering and error-only mode |
+| Trash | Recoverable local deletions and restore controls |
+| Safety | Deletion limits, backups, notifications, and lock status |
+| System | PID, inventories, database size, watcher, and last error |
+| Help | Complete keyboard reference |
 
-Building from source requires Go 1.25 or newer.
+| Key | Action |
+|:---:|---|
+| `1`–`7` or `Tab` | Change dashboard page |
+| `j` / `k` | Scroll |
+| `/` | Filter activity and logs |
+| `e` | Show only errors |
+| `f` | Hide or show paths |
+| `p` | Pause or resume synchronization |
+| `s` | Request an immediate sync |
+| `d` | Request a safe dry-run preview |
+| `x` | Restore an item from trash with confirmation |
+| `?` | Open help |
+| `q` | Close the dashboard; background sync continues |
 
-## CLI reference
+### Service commands
 
-Running `gdrive-bisync` in an interactive terminal opens the Bubble Tea manager automatically. The same command remains a background sync daemon when launched without a terminal, including through systemd.
+| Task | Command |
+|---|---|
+| Start at login | `systemctl --user enable --now gdrive-bisync` |
+| Restart | `systemctl --user restart gdrive-bisync` |
+| Stop | `systemctl --user stop gdrive-bisync` |
+| Service status | `systemctl --user status gdrive-bisync` |
+| Follow service logs | `journalctl --user -u gdrive-bisync -f` |
 
-### Sync and authentication
+### Pause and resume
 
-| Option | Short | Purpose | Changes data? |
-|---|---:|---|---:|
-| `gdrive-bisync` | — | Run the foreground sync engine | Yes |
-| `--setup` | `-s` | Complete Google OAuth authentication | Auth files only |
-| `--dry-run` | — | Scan and print the planned actions without changing local or remote files | No sync changes |
-| `--force` | `-f` | Back up and reset local sync state, then perform a fresh scan | State only |
-| `--allow-unsafe-deletes` | — | Bypass configured deletion limits for this explicit run | Potentially |
-| `--show-logs` | `-l` | Show informational console logs | No |
+```bash
+gdrive-bisync --pause
+gdrive-bisync --resume
+```
 
-Use the unsafe-deletion override only after reviewing a dry run:
+Changes remain on disk while paused and are processed after synchronization resumes.
+
+### Recover a deleted local item
+
+```bash
+gdrive-bisync --trash-list
+gdrive-bisync --trash-restore ENTRY_ID
+```
+
+Restore never overwrites an existing live path. Move the existing item first if you intentionally want to restore the older copy.
+
+## Command-line options
+
+### Synchronization
+
+| Option | Short | Purpose |
+|---|:---:|---|
+| `--setup` | `-s` | Authenticate with Google Drive |
+| `--dry-run` | — | Preview actions without changing files or sync state |
+| `--force` | `-f` | Back up and rebuild the local sync database |
+| `--allow-unsafe-deletes` | — | Explicitly bypass configured deletion limits for one run |
+| `--show-logs` | `-l` | Print informational logs in the terminal |
+
+Always inspect a dry run before bypassing deletion protection:
 
 ```bash
 gdrive-bisync --dry-run
 gdrive-bisync --allow-unsafe-deletes
 ```
 
-### Status and control
+### Status and controls
 
-| Option | Purpose | Notes |
-|---|---|---|
-| `--status` | Show process state, PID, pause state, task count, last sync, and last error | Does not start another sync engine |
-| `--pause` | Pause periodic reconciliation and watcher uploads | Local changes remain on disk and are found after resume |
-| `--resume` | Resume syncing | The next watcher event or periodic cycle continues work |
-| `--tui` | Open the Bubble Tea terminal manager | Uses the same status, pause, resume, and restore layer |
-
-### Trash and recovery
-
-| Option | Purpose | Example |
-|---|---|---|
-| `--trash-list` | List indexed recoverable deletions | `gdrive-bisync --trash-list` |
-| `--trash-restore ID` | Restore an entry to its original relative path | `gdrive-bisync --trash-restore 20260814T004242.395108454` |
-
-Restore refuses to overwrite an existing live path. Move or rename the live file first if you intentionally want the trashed version.
-
-### Service management
-
-| Option | Platform | Purpose |
-|---|---|---|
-| `--install-service` | Linux | Install the systemd user-service definition |
-| `--uninstall-service` | Linux | Stop, disable, and remove the user service |
-
-Useful systemd commands:
-
-| Action | Command |
+| Option | Purpose |
 |---|---|
-| Enable and start | `systemctl --user enable --now gdrive-bisync` |
-| Show status | `systemctl --user status gdrive-bisync` |
-| Restart | `systemctl --user restart gdrive-bisync` |
-| Stop | `systemctl --user stop gdrive-bisync` |
-| Follow logs | `journalctl --user -u gdrive-bisync -f` |
+| `--status` | Print service state, PID, pause state, task count, last sync, and last error |
+| `--pause` | Pause periodic sync and watcher uploads |
+| `--resume` | Resume synchronization |
+| `--tui` | Explicitly open the terminal dashboard |
 
-## Bubble Tea TUI
+### Recovery and service
 
-Running the command in an interactive terminal opens the dashboard without starting a second sync process:
+| Option | Purpose |
+|---|---|
+| `--trash-list` | List recoverable local deletions |
+| `--trash-restore ID` | Restore one trash entry |
+| `--install-service` | Install the Linux systemd user service |
+| `--uninstall-service` | Stop and remove the Linux systemd user service |
 
-```bash
-gdrive-bisync
-```
+## Configuration
 
-| Key | Action |
-|:---:|---|
-| `1`–`7`, `Tab` | Open Overview, Activity, Logs, Trash, Safety, System, or Help |
-| `j` / `k` | Scroll the active view |
-| `/` | Filter activity and logs |
-| `e` | Show only errors |
-| `f` | Toggle path privacy |
-| `p` | Pause or resume syncing |
-| `s` | Request an immediate sync |
-| `d` | Request a non-mutating dry-run preview |
-| `x` | Enter a trash ID, then confirm restoration |
-| `Esc` | Clear a filter or cancel input |
-| `q` or `Ctrl+C` | Quit the TUI |
+Configuration locations:
 
-The responsive dashboard refreshes once per second. It reads a bounded structured event journal and atomic status snapshot written by the daemon:
+| Platform | Directory |
+|---|---|
+| Linux | `~/.config/gdrive-bisync/config/` |
+| Windows | `%USERPROFILE%\.config\gdrive-bisync\config\` |
 
-```text
-gdrive-bisync  ● HEALTHY
-1 Overview  2 Activity  3 Logs  4 Trash  5 Safety  6 System  7 Help
-
-╭ HEALTH ─────────────────╮  ╭ CURRENT SYNC ────────────╮
-│ Last sync  01:20:00     │  │ Progress ███████░░ 72%   │
-│ Next sync  01:21:00     │  │ ↑ 4  ↓ 2  − 0  + 3      │
-│ Watcher    healthy      │  │ Tasks 13 / 18            │
-╰─────────────────────────╯  ╰───────────────────────────╯
-```
-
-The TUI contains observability and sync controls only. It intentionally does not include a file manager; use the operating system file explorer for browsing files.
-
-## Configuration reference
-
-Place `config.json` in `~/.config/gdrive-bisync/config/` on Linux or `%USERPROFILE%\.config\gdrive-bisync\config\` on Windows.
-
-### Paths and timing
+### Essential options
 
 | Option | Type | Default | Description |
 |---|---|---:|---|
-| `LOCAL_SYNC_PATH` | string | `~/GoogleDrive` | Local synchronization root |
-| `REMOTE_FOLDER_ID` | string | `root` | Google Drive folder ID; `root` means My Drive |
-| `DB_FILE_NAME` | string | `.gdrive-bisync.db` | Local bbolt state filename |
-| `WATCH_DEBOUNCE_DELAY` | integer | `5000` | Delay in milliseconds before processing watcher activity |
-| `PERIODIC_SYNC_INTERVAL_MS` | integer | `60000` | Delay in milliseconds between remote-change checks |
+| `LOCAL_SYNC_PATH` | string | `~/GoogleDrive` | Local synchronized folder |
+| `REMOTE_FOLDER_ID` | string | `root` | Drive folder ID; `root` means My Drive |
+| `PERIODIC_SYNC_INTERVAL_MS` | integer | `60000` | Time between Drive checks |
+| `WATCH_DEBOUNCE_DELAY` | integer | `5000` | Delay before processing rapid local changes |
 
-### Concurrency and retries
+### Transfer and retry options
 
 | Option | Type | Default | Description |
 |---|---|---:|---|
-| `MAX_CONCURRENT_SCANS` | integer | `20` | Concurrent Drive scan requests |
+| `MAX_CONCURRENT_SCANS` | integer | `20` | Concurrent Drive folder scans |
 | `MAX_CONCURRENT_DOWNLOADS` | integer | `20` | Simultaneous downloads |
 | `MAX_CONCURRENT_UPLOADS` | integer | `10` | Simultaneous uploads |
-| `MAX_RETRIES` | integer | `10` | Maximum retry attempts for supported operations |
+| `MAX_RETRIES` | integer | `10` | Retry attempts for supported operations |
 
-### Safety and retention
+### Safety and recovery options
 
 | Option | Type | Default | Description |
 |---|---|---:|---|
-| `MAX_DELETIONS_PER_SYNC` | integer | `20` | Abort if a plan exceeds this deletion count; `0` disables the count limit |
-| `MAX_DELETION_PERCENT` | number | `5` | Abort if deletions exceed this percentage of the local scan; `0` disables it |
-| `DATABASE_BACKUP_COUNT` | integer | `5` | Number of rotating database backups retained locally |
-| `ignore` | string[] | `node_modules` pattern | Additional regular expressions for ignored paths |
-| `SHOW_LOGS` | boolean | `false` | Enable informational console and daily file logs |
-| `DESKTOP_NOTIFICATIONS` | boolean | `true` | Send critical Linux desktop notifications when `notify-send` is available |
-| `NOTIFICATION_COOLDOWN_MS` | integer | `1800000` | Suppress repeated notifications for the same failure for 30 minutes; `0` disables cooldown |
+| `MAX_DELETIONS_PER_SYNC` | integer | `20` | Stop when a plan exceeds this deletion count; `0` disables it |
+| `MAX_DELETION_PERCENT` | number | `5` | Stop when deletions exceed this percentage; `0` disables it |
+| `DATABASE_BACKUP_COUNT` | integer | `5` | Number of local sync-database backups to keep |
+| `DESKTOP_NOTIFICATIONS` | boolean | `true` | Show critical failure and recovery notifications on Linux |
+| `NOTIFICATION_COOLDOWN_MS` | integer | `1800000` | Suppress repeated notifications for the same failure |
+| `ignore` | string[] | `node_modules` | Additional regular-expression patterns to ignore |
 
-Internal state, trash, backups, and partial downloads are always ignored automatically.
+### Logging and internal filenames
+
+| Option | Type | Default | Description |
+|---|---|---:|---|
+| `SHOW_LOGS` | boolean | `false` | Print informational logs and write the daily text log |
+| `DB_FILE_NAME` | string | `.gdrive-bisync.db` | Local sync database filename |
+| `METADATA_FILE_NAME` | string | `.gdrive-bisync-metadata.json` | Legacy metadata filename kept for compatibility |
+| `STATE_FILE_NAME` | string | `.gdrive-bisync-state.json` | Legacy state filename kept for compatibility |
 
 Full example:
 
@@ -217,105 +309,52 @@ Full example:
 }
 ```
 
-## How synchronization works
+Internal state, backups, trash, and partial downloads are ignored automatically.
 
-```mermaid
-flowchart TD
-    Start[Periodic cycle] --> LocalScan[Scan local tree]
-    LocalScan --> RemoteChanges[Fetch Drive changes]
-    RemoteChanges --> Plan[Build complete action plan]
-    Plan --> Safety{Deletion limits passed?}
-    Safety -->|No| Abort[Abort before destructive reconciliation]
-    Safety -->|Yes| Apply[Run uploads and atomic downloads]
-    Apply --> Delete[Apply recoverable deletions]
-    Delete --> Persist[Persist state and page token]
-    Persist --> Idle[Wait for watcher or next cycle]
-```
-
-### Decision summary
-
-| Local state | Remote state | Previous evidence | Typical action |
-|---|---|---|---|
-| New or changed | Missing or unchanged | Local is authoritative | Upload |
-| Missing or unchanged | New or changed | Remote is authoritative | Download |
-| Changed | Deleted | Local changed since last sync | Re-upload to protect local work |
-| Unchanged | Deleted | Prior remote checksum exists | Move local item to recoverable trash |
-| Deleted | Unchanged | Prior sync metadata exists | Trash remote item |
-| Both changed | Both present | Conflict | Preserve the current local-wins policy |
-
-Downloads are written to a temporary sibling, flushed, and atomically renamed. Watcher events produced by active downloads are suppressed to prevent upload/download loops.
-
-Remote-only empty folders are created locally as explicit `CREATE_LOCAL_FOLDER` actions, so directory structure converges even when a Drive folder contains no files.
-
-## Safety model
-
-```mermaid
-flowchart LR
-    Candidate[Candidate deletions] --> Collapse[Collapse folder subtrees]
-    Collapse --> Count{Count within limit?}
-    Count -->|No| Stop[Stop and report]
-    Count -->|Yes| Percent{Percentage within limit?}
-    Percent -->|No| Stop
-    Percent -->|Yes| Trash[Path-preserving trash / Drive trash]
-```
+## Safety and recovery
 
 | Protection | Behavior |
 |---|---|
-| Single-instance lock | Prevents a service and manual process from owning the sync state simultaneously |
-| Dry run | Clones in-memory state and blocks local, remote, and database mutations |
-| Deletion thresholds | Validate destructive work before reconciliation |
-| Folder collapsing | Stores a deleted folder as one restorable subtree instead of fragmented children |
-| Atomic download | Leaves the existing destination intact when transfer fails |
-| DB rotation | Copies the previous database before opening a sync session |
-| Restore validation | Rejects path traversal and refuses destination overwrite |
+| Dry run | Shows planned work without modifying files or sync state |
+| Deletion limits | Stops unexpectedly large deletion plans before execution |
+| Recoverable trash | Moves local deletions into a path-preserving trash area |
+| Drive trash | Uses Google Drive trash rather than permanent remote deletion |
+| Atomic downloads | Keeps the existing file intact if a download fails |
+| Database backups | Preserves rotating copies of the previous sync state |
+| Single-instance lock | Prevents multiple sync engines from changing the same state |
+| Desktop notifications | Alerts you to authentication, database, watcher, and sync failures |
 
-## Files and runtime state
+## Troubleshooting
 
-### Inside the sync root
+### Check current health
 
-| Path | Purpose | Synced to Drive? |
-|---|---|:---:|
-| `.gdrive-bisync.db` | Remote index, metadata, and Drive page token | No |
-| `.gdrive-bisync-backups/` | Rotating state backups | No |
-| `.trash/<date>/<entry-id>/manifest.json` | Recovery metadata | No |
-| `.trash/<date>/<entry-id>/files/<original-path>` | Recoverable payload | No |
-| `.gdrive-download-*.partial` | Temporary atomic-download payload | No |
-
-### Inside the user configuration directory
-
-| Path | Purpose | Permissions |
-|---|---|---:|
-| `config/credentials.json` | Google OAuth client configuration | User-managed |
-| `config/token.json` | Google OAuth token | User-managed |
-| `runtime/instance.lock` | Single-process ownership and PID | `0600` |
-| `runtime/status.json` | TUI/CLI runtime status | `0600` |
-| `runtime/paused` | Pause marker | `0600` |
-| `runtime/events.jsonl` | Bounded structured log and activity history | `0600` |
-| `runtime/sync-now` | One-shot manual-sync request | `0600` |
-| `runtime/dry-run` | One-shot dry-run request | `0600` |
-
-## Logging
-
-Every log record contains a category inferred from its calling package:
-
-```text
-2026-08-14 01:20:00 [INFO ] [CORE      ] Starting sync cycle...
-2026-08-14 01:20:01 [INFO ] [API       ] Uploading file path=Notes/plan.md
-2026-08-14 01:20:02 [WARN ] [STORE     ] Database backup delayed error=...
+```bash
+gdrive-bisync --status
+systemctl --user status gdrive-bisync
 ```
 
-Category colors are generated from a stable FNV hash and cached dynamically. Adding a package automatically creates a consistent color—there is no category/color registry to maintain. Scan animation is shown only in an interactive terminal, preventing ANSI progress output from becoming systemd journal “blob data.”
+### View recent errors
 
-### Desktop notifications
+Open the dashboard and select **Logs**, or run:
 
-On Linux, critical authentication, database, watcher, and sync failures are sent through `notify-send`. Repeated failures in the same category are deduplicated for the configured cooldown, and a successful sync produces one recovery notification after a sync failure. If `notify-send` or a graphical notification session is unavailable, synchronization continues and the error remains available in logs, `--status`, and the TUI.
+```bash
+journalctl --user -u gdrive-bisync -n 100
+```
 
-## Development
+### The service is already running
 
-| Task | Command |
-|---|---|
-| Run tests | `go test ./...` |
-| Run race detector | `go test -race ./...` |
-| Run static checks | `go vet ./...` |
-| Build Linux binary | `make linux` |
-| Build release archives | `make release` |
+This is expected when systemd owns the background sync process. Run `gdrive-bisync` in a terminal to open the dashboard, or use `--status`; do not start a second daemon manually.
+
+### Local and Drive contents look different
+
+Request a safe comparison from the dashboard with `d`, or stop the service temporarily and run:
+
+```bash
+systemctl --user stop gdrive-bisync
+gdrive-bisync --dry-run
+systemctl --user start gdrive-bisync
+```
+
+### Desktop notifications do not appear
+
+Install `notify-send` and ensure a graphical notification session is available. Synchronization continues normally when desktop notifications are unavailable; errors remain visible in status, logs, and the TUI.
