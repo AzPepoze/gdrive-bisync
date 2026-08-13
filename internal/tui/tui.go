@@ -118,12 +118,12 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.page = int(key[0] - '1')
 			model.scroll = 0
 		case "up", "k":
+			model.scroll++
+			model.follow = false
+		case "down", "j":
 			if model.scroll > 0 {
 				model.scroll--
 			}
-			model.follow = false
-		case "down", "j":
-			model.scroll++
 			model.follow = false
 		case "g":
 			model.scroll = 0

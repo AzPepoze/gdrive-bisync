@@ -85,3 +85,21 @@ func TestQuestionMarkOpensHelp(t *testing.T) {
 		t.Fatal("question mark did not open help")
 	}
 }
+
+func TestLogArrowKeysScrollInTheirVisualDirection(t *testing.T) {
+	model := NewModel(appstate.Paths{}, t.TempDir())
+	model.follow = false
+	model.scroll = 2
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(Model)
+	if model.scroll != 1 {
+		t.Fatalf("down arrow should move toward newer entries, got scroll offset %d", model.scroll)
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = updated.(Model)
+	if model.scroll != 2 {
+		t.Fatalf("up arrow should move toward older entries, got scroll offset %d", model.scroll)
+	}
+}
