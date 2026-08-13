@@ -155,7 +155,7 @@ func main() {
 		logger.Error("Another gdrive-bisync process is already running", "error", err)
 		os.Exit(2)
 	}
-	defer instanceLock.Close()
+	defer func() { _ = instanceLock.Close() }()
 
 	dbPath := filepath.Join(resolvedLocalPath, cfg.DBFileName)
 	if !*dryRunFlag {
@@ -176,8 +176,11 @@ func main() {
 		}
 		legacyStatePath := filepath.Join(resolvedLocalPath, cfg.StateFileName)
 		legacyMetaPath := filepath.Join(resolvedLocalPath, cfg.MetadataFileName)
-		os.Remove(legacyStatePath)
-		os.Remove(legacyMetaPath)
+		for _, legacyPath := range []string{legacyStatePath, legacyMetaPath} {
+			if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+				logger.Warn("Failed to remove legacy state file", "path", legacyPath, "error", err)
+			}
+		}
 	}
 
 	authClient, err := api.Authorize(context.Background())
@@ -198,7 +201,7 @@ func main() {
 		logger.Error("Failed to open database", "error", err)
 		os.Exit(1)
 	}
-	defer dbStore.Close()
+	defer func() { _ = dbStore.Close() }()
 
 	remoteFiles, err := dbStore.LoadRemoteFiles()
 	if err != nil {

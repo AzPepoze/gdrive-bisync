@@ -16,29 +16,28 @@ import (
 func (s *DriveService) DownloadFile(ctx context.Context, request DownloadFileRequest) error {
 	logger.Debug("Downloading file from Google Drive", "fileId", request.FileID, "destination", request.DestinationPath)
 
-	var response *drive.FilesGetCall
-	response = s.srv.Files.Get(request.FileID).SupportsAllDrives(true).Context(ctx)
+	response := s.srv.Files.Get(request.FileID).SupportsAllDrives(true).Context(ctx)
 
 	httpResponse, err := response.Download()
 	if err != nil {
 		return err
 	}
-	defer httpResponse.Body.Close()
+	defer func() { _ = httpResponse.Body.Close() }()
 
 	temporary, err := os.CreateTemp(filepath.Dir(request.DestinationPath), ".gdrive-download-*.partial")
 	if err != nil {
 		return err
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 
 	written, err := io.Copy(temporary, httpResponse.Body)
 	if err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err := temporary.Sync(); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err := temporary.Close(); err != nil {
@@ -56,7 +55,7 @@ func (s *DriveService) UploadOrUpdateFile(ctx context.Context, request UploadFil
 	if err != nil {
 		return nil, err
 	}
-	defer fileHandle.Close()
+	defer func() { _ = fileHandle.Close() }()
 
 	fileInfo, err := fileHandle.Stat()
 	if err == nil {

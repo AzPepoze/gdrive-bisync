@@ -22,7 +22,7 @@ func BackupDatabase(databasePath string, keep int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer input.Close()
+	defer func() { _ = input.Close() }()
 
 	backupDirectory := filepath.Join(filepath.Dir(databasePath), ".gdrive-bisync-backups")
 	if err := os.MkdirAll(backupDirectory, 0700); err != nil {
@@ -35,13 +35,13 @@ func BackupDatabase(databasePath string, keep int) (string, error) {
 		return "", err
 	}
 	if _, err := io.Copy(output, input); err != nil {
-		output.Close()
-		os.Remove(backupPath)
+		_ = output.Close()
+		_ = os.Remove(backupPath)
 		return "", err
 	}
 	if err := output.Sync(); err != nil {
-		output.Close()
-		os.Remove(backupPath)
+		_ = output.Close()
+		_ = os.Remove(backupPath)
 		return "", err
 	}
 	if err := output.Close(); err != nil {

@@ -31,7 +31,7 @@ func WatchLocalFiles(
 		logger.Error("Failed to create watcher", "error", err)
 		return
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	err = filepath.Walk(localPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -96,7 +96,9 @@ func WatchLocalFiles(
 			if event.Op&fsnotify.Create == fsnotify.Create {
 				info, err := os.Stat(event.Name)
 				if err == nil && info.IsDir() {
-					watcher.Add(event.Name)
+					if err := watcher.Add(event.Name); err != nil {
+						logger.Warn("Failed to watch new directory", "path", event.Name, "error", err)
+					}
 					logger.Debug("Added watch for new directory", "path", event.Name)
 				}
 			}

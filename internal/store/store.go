@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.etcd.io/bbolt"
+	berrors "go.etcd.io/bbolt/errors"
 
 	"gdrive-bisync/internal/types"
 )
@@ -35,7 +36,7 @@ func Open(path string) (*Store, error) {
 		return nil
 	})
 	if err != nil {
-		database.Close()
+		_ = database.Close()
 		return nil, err
 	}
 
@@ -111,7 +112,7 @@ func (store *Store) SaveRemoteFiles(changedFiles types.DriveFileMap, deletedPath
 
 func (store *Store) ReplaceAllRemoteFiles(remoteFiles types.DriveFileMap) error {
 	return store.database.Update(func(transaction *bbolt.Tx) error {
-		if err := transaction.DeleteBucket(bucketRemoteFiles); err != nil && err != bbolt.ErrBucketNotFound {
+		if err := transaction.DeleteBucket(bucketRemoteFiles); err != nil && err != berrors.ErrBucketNotFound {
 			return err
 		}
 		bucket, err := transaction.CreateBucket(bucketRemoteFiles)
@@ -160,7 +161,7 @@ func (store *Store) SaveMetadata(changedMetadata map[string]*types.FileMetadata,
 
 func (store *Store) ReplaceAllMetadata(metadata map[string]*types.FileMetadata) error {
 	return store.database.Update(func(transaction *bbolt.Tx) error {
-		if err := transaction.DeleteBucket(bucketMetadata); err != nil && err != bbolt.ErrBucketNotFound {
+		if err := transaction.DeleteBucket(bucketMetadata); err != nil && err != berrors.ErrBucketNotFound {
 			return err
 		}
 		bucket, err := transaction.CreateBucket(bucketMetadata)

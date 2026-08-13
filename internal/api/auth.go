@@ -43,7 +43,8 @@ func Authorize(ctx context.Context) (*http.Client, error) {
 		return nil, fmt.Errorf("authentication not configured: %w", err)
 	}
 
-	creds, err := google.CredentialsFromJSON(ctx, b, drive.DriveScope)
+	// The token file is created by this application from a locally configured OAuth client.
+	creds, err := google.CredentialsFromJSON(ctx, b, drive.DriveScope) //nolint:staticcheck // trusted local authorized-user credentials
 	if err != nil {
 		return nil, fmt.Errorf("invalid token file: %w", err)
 	}
@@ -97,7 +98,7 @@ func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
 		logger.Error("Failed to start local auth server", "error", err)
 		return nil
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	// Update redirect URL with the assigned port
 	port := listener.Addr().(*net.TCPAddr).Port
@@ -111,11 +112,15 @@ func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
 		code := r.URL.Query().Get("code")
 		if code != "" {
 			w.Header().Set("Content-Type", "text/html")
-			w.Write([]byte("<h1>Authentication Successful!</h1><p>You can close this window and return to the terminal.</p>"))
+			if _, err := w.Write([]byte("<h1>Authentication Successful!</h1><p>You can close this window and return to the terminal.</p>")); err != nil {
+				logger.Warn("Failed to write auth response", "error", err)
+			}
 			codeChan <- code
 		} else {
 			w.Header().Set("Content-Type", "text/html")
-			w.Write([]byte("<h1>Authentication Failed</h1><p>No code received.</p>"))
+			if _, err := w.Write([]byte("<h1>Authentication Failed</h1><p>No code received.</p>")); err != nil {
+				logger.Warn("Failed to write auth response", "error", err)
+			}
 		}
 	})
 
@@ -124,7 +129,7 @@ func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
 			logger.Error("Auth server error", "error", err)
 		}
 	}()
-	defer server.Shutdown(ctx)
+	defer func() { _ = server.Shutdown(ctx) }()
 
 	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
 	logger.Info("Starting auth server", "port", port)
@@ -154,9 +159,13 @@ func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
 		logger.Error("Unable to cache oauth token", "error", err)
 		return nil
 	}
-	defer f.Close()
 	if err := json.NewEncoder(f).Encode(payload); err != nil {
+		_ = f.Close()
 		logger.Error("Unable to cache oauth token", "error", err)
+		return nil
+	}
+	if err := f.Close(); err != nil {
+		logger.Error("Unable to finalize oauth token", "error", err)
 		return nil
 	}
 

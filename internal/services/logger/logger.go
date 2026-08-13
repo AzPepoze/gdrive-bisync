@@ -54,7 +54,9 @@ func (h *ConsoleHandler) Handle(ctx context.Context, r slog.Record) error {
 	defer outputMu.Unlock()
 
 	if lastProgressLen > 0 {
-		fmt.Fprint(h.w, "\r\033[2K")
+		if _, err := fmt.Fprint(h.w, "\r\033[2K"); err != nil {
+			return err
+		}
 		lastProgressLen = 0
 	}
 
@@ -91,7 +93,9 @@ func (h *ConsoleHandler) Handle(ctx context.Context, r slog.Record) error {
 	_, err := fmt.Fprintf(h.w, "%s [%s] [%s] %s%s\n", t, levelStr, categoryLabel, msg, attrs)
 
 	if currentProgressMsg != "" {
-		fmt.Fprintf(h.w, "\r\033[36m[SCAN]\033[0m %s", currentProgressMsg)
+		if _, progressErr := fmt.Fprintf(h.w, "\r\033[36m[SCAN]\033[0m %s", currentProgressMsg); err == nil {
+			err = progressErr
+		}
 		lastProgressLen = len(currentProgressMsg) + 7
 	}
 
@@ -191,7 +195,7 @@ func Init(showLogs bool) {
 
 func Close() {
 	if logFile != nil {
-		logFile.Close()
+		_ = logFile.Close()
 	}
 }
 

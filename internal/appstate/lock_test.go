@@ -11,11 +11,11 @@ func TestAcquireInstanceLockRejectsSecondOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire first lock: %v", err)
 	}
-	defer first.Close()
+	defer func() { _ = first.Close() }()
 
 	second, err := AcquireInstanceLock(path)
 	if err == nil {
-		second.Close()
+		_ = second.Close()
 		t.Fatal("expected second lock acquisition to fail")
 	}
 }
@@ -34,5 +34,5 @@ func TestAcquireInstanceLockCanBeReacquiredAfterClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reacquire lock: %v", err)
 	}
-	second.Close()
+	_ = second.Close()
 }

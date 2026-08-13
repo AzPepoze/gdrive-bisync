@@ -34,7 +34,7 @@ func TestReplaceSyncStatePersistsOneConsistentSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 	remote := types.DriveFileMap{"a.txt": {ID: "id-a", Path: "a.txt"}}
 	metadata := map[string]*types.FileMetadata{"a.txt": {RemoteMD5Checksum: "hash"}}
 	if err := database.ReplaceSyncState(remote, metadata, "token-a"); err != nil {

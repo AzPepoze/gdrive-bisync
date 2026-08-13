@@ -17,7 +17,7 @@ func GetFileMD5(filePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	hash := md5.New()
 	if _, err := io.Copy(hash, file); err != nil {

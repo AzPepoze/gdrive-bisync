@@ -17,24 +17,24 @@ func AcquireInstanceLock(path string) (*InstanceLock, error) {
 
 	locked, err := tryLockFile(file)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 	if !locked {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("another gdrive-bisync process already owns %s", path)
 	}
 
 	if err := file.Truncate(0); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 	if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 	if err := file.Sync(); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 	return &InstanceLock{file: file}, nil
