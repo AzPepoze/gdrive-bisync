@@ -25,10 +25,12 @@ func WatchLocalFiles(
 	cfg *config.Config,
 	dbStore *store.Store,
 	pauseFile string,
+	onError func(error),
 ) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		logger.Error("Failed to create watcher", "error", err)
+		reportWatcherError(onError, err)
 		return
 	}
 	defer func() { _ = watcher.Close() }()
@@ -55,6 +57,7 @@ func WatchLocalFiles(
 	})
 	if err != nil {
 		logger.Error("Failed to add watch paths", "error", err)
+		reportWatcherError(onError, err)
 	}
 
 	logger.Info(fmt.Sprintf("Watching for local changes in: %s", localPath))
@@ -118,9 +121,11 @@ func WatchLocalFiles(
 				delete(debounceOps, relPathCopy)
 				debounceMu.Unlock()
 				if sharedState != nil {
-					sharedState.RunMutation(func() { handleWatchEvent(mergedEvent, localPath, relPathCopy, driveService, sharedState, cfg, dbStore) })
+					sharedState.RunMutation(func() {
+						handleWatchEvent(mergedEvent, localPath, relPathCopy, driveService, sharedState, cfg, dbStore, onError)
+					})
 				} else {
-					handleWatchEvent(mergedEvent, localPath, relPathCopy, driveService, sharedState, cfg, dbStore)
+					handleWatchEvent(mergedEvent, localPath, relPathCopy, driveService, sharedState, cfg, dbStore, onError)
 				}
 			})
 			debounceMu.Unlock()
@@ -130,6 +135,7 @@ func WatchLocalFiles(
 				return
 			}
 			logger.Error("Watcher error", "error", err)
+			reportWatcherError(onError, err)
 		}
 	}
 }
@@ -142,6 +148,7 @@ func handleWatchEvent(
 	sharedState *SharedState,
 	cfg *config.Config,
 	dbStore *store.Store,
+	onError func(error),
 ) {
 	logger.Info(fmt.Sprintf("Processing change: %s %s", event.Op.String(), relativePath))
 
@@ -190,6 +197,7 @@ func handleWatchEvent(
 		uploadedFile, err := driveService.UploadOrUpdateFile(context.Background(), request)
 		if err != nil {
 			logger.Error("Upload failed", "path", relativePath, "error", err)
+			reportWatcherError(onError, fmt.Errorf("upload %s: %w", relativePath, err))
 			return
 		}
 
@@ -206,6 +214,7 @@ func handleWatchEvent(
 			})
 			if err := dbStore.SaveFileState(relativePath, uploadedFile, fileMetadata); err != nil {
 				logger.Error("Failed to persist remote file to store", "path", relativePath, "error", err)
+				reportWatcherError(onError, fmt.Errorf("persist %s: %w", relativePath, err))
 			}
 		}
 
@@ -215,5 +224,11 @@ func handleWatchEvent(
 		// Deletions and renames are intentionally handled by the sync cycle.
 		// This avoids destructive races where a local rename is interpreted as an immediate remote delete.
 		logger.Info("Deferring remove/rename reconciliation to sync cycle", "path", relativePath, "op", event.Op.String())
+	}
+}
+
+func reportWatcherError(onError func(error), err error) {
+	if onError != nil {
+		onError(err)
 	}
 }

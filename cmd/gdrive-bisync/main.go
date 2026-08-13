@@ -17,6 +17,7 @@ import (
 	"gdrive-bisync/internal/config"
 	"gdrive-bisync/internal/core"
 	"gdrive-bisync/internal/services/logger"
+	"gdrive-bisync/internal/services/notifier"
 	"gdrive-bisync/internal/services/systemd"
 	"gdrive-bisync/internal/store"
 	"gdrive-bisync/internal/tui"
@@ -71,6 +72,7 @@ func main() {
 	showLogs := *showLogsFlag || cfg.ShowLogs || *dryRunFlag
 	logger.Init(showLogs)
 	defer logger.Close()
+	desktopNotifier := notifier.New(cfg.DesktopNotifications, time.Duration(cfg.NotificationCooldownMs)*time.Millisecond)
 
 	if *setupFlag {
 		if err := api.SetupAuthentication(context.Background()); err != nil {
@@ -161,6 +163,7 @@ func main() {
 	if !*dryRunFlag {
 		if backupPath, err := store.BackupDatabase(dbPath, cfg.DatabaseBackupCount); err != nil {
 			logger.Error("Failed to back up database", "error", err)
+			desktopNotifier.Critical("database-backup", "Google Drive backup failed", err.Error())
 			os.Exit(1)
 		} else if backupPath != "" {
 			logger.Info("Database backup created", "path", backupPath)
@@ -186,6 +189,7 @@ func main() {
 	authClient, err := api.Authorize(context.Background())
 	if err != nil {
 		logger.Error("Authentication failed", "error", err)
+		desktopNotifier.Critical("authentication", "Google Drive authentication failed", err.Error())
 		logger.Info("Please run with --setup to configure authentication.")
 		os.Exit(1)
 	}
@@ -193,12 +197,14 @@ func main() {
 	driveService, err := api.NewDriveService(authClient)
 	if err != nil {
 		logger.Error("Failed to create Drive service", "error", err)
+		desktopNotifier.Critical("drive-service", "Google Drive connection failed", err.Error())
 		os.Exit(1)
 	}
 
 	dbStore, err := store.Open(dbPath)
 	if err != nil {
 		logger.Error("Failed to open database", "error", err)
+		desktopNotifier.Critical("database-open", "Google Drive sync database failed", err.Error())
 		os.Exit(1)
 	}
 	defer func() { _ = dbStore.Close() }()
@@ -274,6 +280,11 @@ func main() {
 			}
 			status.LastSyncFinished = time.Now()
 		})
+		if syncErr != nil {
+			desktopNotifier.Critical("sync", "Google Drive sync failed", syncErr.Error())
+		} else {
+			desktopNotifier.Recovered("sync", "Files are syncing normally again.")
+		}
 	}
 
 	runSync()
@@ -282,7 +293,9 @@ func main() {
 		return
 	}
 
-	go core.WatchLocalFiles(resolvedLocalPath, driveService, sharedState, cfg, dbStore, runtimePaths.PauseFile)
+	go core.WatchLocalFiles(resolvedLocalPath, driveService, sharedState, cfg, dbStore, runtimePaths.PauseFile, func(err error) {
+		desktopNotifier.Critical("watcher", "Google Drive live sync failed", err.Error())
+	})
 
 	ticker := time.NewTicker(time.Duration(cfg.PeriodicSyncIntervalMs) * time.Millisecond)
 	defer ticker.Stop()

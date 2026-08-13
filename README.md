@@ -181,6 +181,8 @@ Place `config.json` in `~/.config/gdrive-bisync/config/` on Linux or `%USERPROFI
 | `DATABASE_BACKUP_COUNT` | integer | `5` | Number of rotating database backups retained locally |
 | `ignore` | string[] | `node_modules` pattern | Additional regular expressions for ignored paths |
 | `SHOW_LOGS` | boolean | `false` | Enable informational console and daily file logs |
+| `DESKTOP_NOTIFICATIONS` | boolean | `true` | Send critical Linux desktop notifications when `notify-send` is available |
+| `NOTIFICATION_COOLDOWN_MS` | integer | `1800000` | Suppress repeated notifications for the same failure for 30 minutes; `0` disables cooldown |
 
 Internal state, trash, backups, and partial downloads are always ignored automatically.
 
@@ -201,6 +203,8 @@ Full example:
   "MAX_DELETION_PERCENT": 5,
   "DATABASE_BACKUP_COUNT": 5,
   "SHOW_LOGS": false,
+  "DESKTOP_NOTIFICATIONS": true,
+  "NOTIFICATION_COOLDOWN_MS": 1800000,
   "ignore": ["(^|.*[\\\\/])node_modules([\\\\/].*|$)"]
 }
 ```
@@ -288,6 +292,10 @@ Every log record contains a category inferred from its calling package:
 ```
 
 Category colors are generated from a stable FNV hash and cached dynamically. Adding a package automatically creates a consistent color—there is no category/color registry to maintain. Scan animation is shown only in an interactive terminal, preventing ANSI progress output from becoming systemd journal “blob data.”
+
+### Desktop notifications
+
+On Linux, critical authentication, database, watcher, and sync failures are sent through `notify-send`. Repeated failures in the same category are deduplicated for the configured cooldown, and a successful sync produces one recovery notification after a sync failure. If `notify-send` or a graphical notification session is unavailable, synchronization continues and the error remains available in logs, `--status`, and the TUI.
 
 ## Development
 

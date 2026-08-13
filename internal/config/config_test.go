@@ -14,6 +14,12 @@ func TestValidateRejectsUnsafeRuntimeValues(t *testing.T) {
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected deletion percentage above 100 to fail validation")
 	}
+
+	config = DefaultConfig
+	config.NotificationCooldownMs = -1
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected negative notification cooldown to fail validation")
+	}
 }
 
 func TestLoadAddsLocalSafetyFilesToIgnoreSet(t *testing.T) {

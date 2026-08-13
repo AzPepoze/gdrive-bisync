@@ -26,6 +26,8 @@ var (
 		MaxDeletionsPerSync:    20,
 		MaxDeletionPercent:     5,
 		DatabaseBackupCount:    5,
+		DesktopNotifications:   true,
+		NotificationCooldownMs: 30 * 60 * 1000,
 		ShowLogs:               false,
 		Ignore:                 []string{`(^|.*[\\/])node_modules([\\/].*|$)`},
 	}
@@ -47,6 +49,8 @@ type Config struct {
 	MaxDeletionsPerSync    int      `json:"MAX_DELETIONS_PER_SYNC"`
 	MaxDeletionPercent     float64  `json:"MAX_DELETION_PERCENT"`
 	DatabaseBackupCount    int      `json:"DATABASE_BACKUP_COUNT"`
+	DesktopNotifications   bool     `json:"DESKTOP_NOTIFICATIONS"`
+	NotificationCooldownMs int      `json:"NOTIFICATION_COOLDOWN_MS"`
 	ShowLogs               bool     `json:"SHOW_LOGS"`
 	IgnoreRegexps          []*regexp.Regexp
 }
@@ -129,6 +133,9 @@ func (config Config) Validate() error {
 	}
 	if config.DatabaseBackupCount < 0 {
 		return fmt.Errorf("DATABASE_BACKUP_COUNT must not be negative")
+	}
+	if config.NotificationCooldownMs < 0 {
+		return fmt.Errorf("NOTIFICATION_COOLDOWN_MS must not be negative")
 	}
 	return nil
 }

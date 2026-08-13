@@ -30,6 +30,7 @@ func TestHandleWatchEvent_WhenPathIsDirectory_DoesNotUpload(t *testing.T) {
 		sharedState,
 		cfg,
 		nil,
+		nil,
 	)
 
 	if len(fakeDrive.uploadCalls) != 0 {
@@ -52,6 +53,7 @@ func TestHandleWatchEvent_WhenParentFolderIsMissing_RemainsDeferred(t *testing.T
 		fakeDrive,
 		sharedState,
 		cfg,
+		nil,
 		nil,
 	)
 
@@ -77,6 +79,7 @@ func TestHandleWatchEvent_WhenParentFolderExists_UploadsFile(t *testing.T) {
 		fakeDrive,
 		sharedState,
 		cfg,
+		nil,
 		nil,
 	)
 
