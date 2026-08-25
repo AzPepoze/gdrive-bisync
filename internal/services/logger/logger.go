@@ -306,6 +306,10 @@ func callerCategory() string {
 	return strings.ToUpper(filepath.Base(filepath.Dir(file)))
 }
 
+// Light-palette-safe 256-color codes, chosen for contrast on white or
+// near-white terminal backgrounds.
+var lightCategoryPalette = []uint32{26, 28, 130, 127, 18, 94, 168, 30}
+
 func categoryColor(category string) uint32 {
 	category = strings.ToUpper(category)
 	if cached, ok := categoryColors.Load(category); ok {
@@ -313,8 +317,7 @@ func categoryColor(category string) uint32 {
 	}
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(category))
-	// Use the 6×6×6 terminal color cube, avoiding low-contrast system colors.
-	color := uint32(16 + hash.Sum32()%216)
+	color := lightCategoryPalette[hash.Sum32()%uint32(len(lightCategoryPalette))]
 	categoryColors.Store(category, color)
 	return color
 }

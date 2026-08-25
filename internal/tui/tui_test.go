@@ -78,6 +78,26 @@ func TestViewAdaptsToNarrowAndWideTerminals(t *testing.T) {
 	}
 }
 
+func TestViewFillsTerminalHeight(t *testing.T) {
+	directory := t.TempDir()
+	paths := appstate.Paths{StatusFile: filepath.Join(directory, "status.json"), EventsFile: filepath.Join(directory, "events.jsonl"), PauseFile: filepath.Join(directory, "paused")}
+	if err := appstate.WriteStatus(paths.StatusFile, appstate.Status{State: "idle"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range []int{pageOverview, pageActivity, pageLogs} {
+		for _, size := range []tea.WindowSizeMsg{{Width: 100, Height: 30}, {Width: 60, Height: 28}, {Width: 120, Height: 50}} {
+			model := NewModel(paths, directory)
+			updated, _ := model.Update(size)
+			model = updated.(Model)
+			model.page = page
+			view := model.View()
+			if lines := strings.Count(view, "\n") + 1; lines != size.Height {
+				t.Fatalf("view on page %d at %#v rendered %d lines, want %d", page, size, lines, size.Height)
+			}
+		}
+	}
+}
+
 func TestQuestionMarkOpensHelp(t *testing.T) {
 	model := NewModel(appstate.Paths{}, t.TempDir())
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})

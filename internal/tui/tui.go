@@ -30,16 +30,20 @@ const (
 var pageNames = []string{"Overview", "Activity", "Logs", "Trash", "Safety", "System", "Help"}
 
 var (
-	accent     = lipgloss.Color("63")
-	green      = lipgloss.Color("42")
-	yellow     = lipgloss.Color("214")
-	red        = lipgloss.Color("196")
-	muted      = lipgloss.Color("245")
+	accent     = lipgloss.Color("26")
+	green      = lipgloss.Color("28")
+	yellow     = lipgloss.Color("130")
+	red        = lipgloss.Color("124")
+	muted      = lipgloss.Color("244")
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	dimStyle   = lipgloss.NewStyle().Foreground(muted)
 	errorStyle = lipgloss.NewStyle().Foreground(red)
-	panelStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(0, 1)
+	panelStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("250")).Padding(0, 1)
 )
+
+// Light-palette-safe colors for log categories, chosen for contrast on
+// white/near-white terminal backgrounds.
+var categoryPalette = []lipgloss.Color{"26", "28", "130", "127", "18", "94", "168", "30"}
 
 type refreshMsg struct{}
 
@@ -226,7 +230,11 @@ func (model Model) View() string {
 	if model.confirmRestore {
 		out.WriteString("\n" + errorStyle.Bold(true).Render("Restore this trash entry? [y] yes  [n] no"))
 	}
-	out.WriteString("\n" + dimStyle.Render("1-7 pages · tab navigate · s sync · d dry-run · p pause · f privacy · / filter · ? help · q quit"))
+	footer := dimStyle.Render("1-7 pages · tab navigate · s sync · d dry-run · p pause · f privacy · / filter · ? help · q quit")
+	if pad := model.height - (strings.Count(out.String(), "\n") + 1) - 1; pad > 0 {
+		out.WriteString(strings.Repeat("\n", pad))
+	}
+	out.WriteString("\n" + footer)
 	return out.String()
 }
 
@@ -241,14 +249,20 @@ func (model Model) header(width int) string {
 		color = yellow
 	}
 	tabs := make([]string, len(pageNames))
+	plain := make([]string, len(pageNames))
 	for i, name := range pageNames {
+		plain[i] = fmt.Sprintf("%d %s", i+1, name)
 		if i == model.page {
-			tabs[i] = lipgloss.NewStyle().Bold(true).Foreground(accent).Render(fmt.Sprintf("%d %s", i+1, name))
+			tabs[i] = lipgloss.NewStyle().Bold(true).Underline(true).Foreground(accent).Render(plain[i])
 		} else {
-			tabs[i] = dimStyle.Render(fmt.Sprintf("%d %s", i+1, name))
+			tabs[i] = dimStyle.Render(plain[i])
 		}
 	}
-	return titleStyle.Render("gdrive-bisync") + "  " + lipgloss.NewStyle().Bold(true).Foreground(color).Render("● "+state) + "\n" + truncate(strings.Join(tabs, "  "), width)
+	tabLine := strings.Join(tabs, "  ")
+	if utf8.RuneCountInString(strings.Join(plain, "  ")) > width {
+		tabLine = truncate(strings.Join(plain, "  "), width)
+	}
+	return titleStyle.Render("gdrive-bisync") + "  " + lipgloss.NewStyle().Bold(true).Foreground(color).Render("● "+state) + "\n" + tabLine
 }
 
 func (model Model) overview(width int) string {
@@ -259,9 +273,9 @@ func (model Model) overview(width int) string {
 	health := fmt.Sprintf("Last sync  %s\nNext sync  %s\nUptime     %s\nWatcher    %s", displayTime(model.status.LastSyncFinished), displayTime(model.status.NextSync), durationSince(model.status.StartedAt), healthWord(model.status.WatcherHealthy))
 	sync := fmt.Sprintf("Progress   %s %3d%%\nTasks      %d / %d\n↑ Upload   %-5d ↓ Download %-5d\n− Delete   %-5d + Folders  %-5d", progressBar(progress, 18), progress, model.status.CompletedTasks, model.status.TaskCount, model.status.Uploads, model.status.Downloads, model.status.Deletions, model.status.Folders)
 	if width >= 90 {
-		return lipgloss.JoinHorizontal(lipgloss.Top, panelStyle.Width(width/2-4).Render("HEALTH\n"+health), "  ", panelStyle.Width(width/2-4).Render("CURRENT SYNC\n"+sync)) + "\n" + panelStyle.Width(width-4).Render("RECENT ACTIVITY\n"+model.eventLines(width-8, true, 6))
+		return lipgloss.JoinHorizontal(lipgloss.Top, panelStyle.Width(width/2-4).Render("HEALTH\n"+health), "  ", panelStyle.Width(width/2-4).Render("CURRENT SYNC\n"+sync)) + "\n" + panelStyle.Width(width-4).Render("RECENT ACTIVITY\n"+model.eventLines(width-8, true, max(6, model.height-14)))
 	}
-	return panelStyle.Width(width-4).Render("HEALTH\n"+health) + "\n" + panelStyle.Width(width-4).Render("CURRENT SYNC\n"+sync) + "\n" + panelStyle.Width(width-4).Render("RECENT ACTIVITY\n"+model.eventLines(width-8, true, 4))
+	return panelStyle.Width(width-4).Render("HEALTH\n"+health) + "\n" + panelStyle.Width(width-4).Render("CURRENT SYNC\n"+sync) + "\n" + panelStyle.Width(width-4).Render("RECENT ACTIVITY\n"+model.eventLines(width-8, true, max(4, model.height-20)))
 }
 
 func (model Model) eventView(width int, activity bool) string {
@@ -269,7 +283,7 @@ func (model Model) eventView(width int, activity bool) string {
 	if activity {
 		title = "RECENT OPERATIONS"
 	}
-	return panelStyle.Width(width - 4).Render(title + "\n" + model.eventLines(width-8, activity, max(5, model.height-8)))
+	return panelStyle.Width(width - 4).Render(title + "\n" + model.eventLines(width-8, activity, max(5, model.height-6)))
 }
 
 func (model Model) eventLines(width int, activity bool, limit int) string {
@@ -309,16 +323,21 @@ func (model Model) eventLines(width int, activity bool, limit int) string {
 			level = errorStyle.Render("ERROR")
 		case "WARN":
 			level = lipgloss.NewStyle().Foreground(yellow).Render("WARN ")
-		default:
+		case "DEBUG", "TRACE":
+			level = dimStyle.Render(fmt.Sprintf("%-5s", level))
+		case "INFO":
 			level = lipgloss.NewStyle().Foreground(green).Render(fmt.Sprintf("%-5s", level))
+		default:
+			level = dimStyle.Render(fmt.Sprintf("%-5s", level))
 		}
-		category := lipgloss.NewStyle().Foreground(categoryColor(event.Category)).Render(fmt.Sprintf("%-9s", event.Category))
+		category := lipgloss.NewStyle().Foreground(categoryColor(event.Category)).Render(fmt.Sprintf("%-9s", fallback(event.Category, "·")))
 		detail := ""
 		if value, ok := event.Fields["error"]; ok {
 			detail = " error=" + fmt.Sprint(value)
 		}
-		line := fmt.Sprintf("%s %s %s %s%s%s", event.Time.Format("15:04:05"), level, category, event.Message, path, detail)
-		lines = append(lines, truncate(line, width))
+		rest := truncate(event.Message+path+detail, width-25)
+		line := fmt.Sprintf("%s %s %s %s", event.Time.Format("15:04:05"), level, category, rest)
+		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
 		return dimStyle.Render("No matching events yet.")
@@ -467,7 +486,7 @@ func max(a, b int) int {
 func categoryColor(category string) lipgloss.Color {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(strings.ToUpper(category)))
-	return lipgloss.Color(fmt.Sprintf("%d", 16+hash.Sum32()%216))
+	return categoryPalette[hash.Sum32()%uint32(len(categoryPalette))]
 }
 
 func RunTerminal(paths appstate.Paths, syncRoot string, cfg ...*config.Config) error {
