@@ -56,7 +56,7 @@ func Sync(
 		options.OnInventory(len(localFiles), len(remoteFiles))
 	}
 	preflightTasks := collapseDeletionSubtrees(planDeletionPreflight(localFiles, remoteFiles, metadata, cfg.IgnoreRegexps), localFiles, remoteFiles)
-	if err := validateDeletionSafety(preflightTasks, len(localFiles), len(remoteFiles), cfg, options.AllowUnsafeDeletes); err != nil {
+	if err := validateDeletionSafety(preflightTasks, localFiles, remoteFiles, cfg, options.AllowUnsafeDeletes); err != nil {
 		return err
 	}
 
@@ -83,7 +83,7 @@ func Sync(
 	if options.OnTasks != nil {
 		options.OnTasks(tasks)
 	}
-	if err := validateDeletionSafety(tasks, len(localFiles), len(remoteFiles), cfg, options.AllowUnsafeDeletes); err != nil {
+	if err := validateDeletionSafety(tasks, localFiles, remoteFiles, cfg, options.AllowUnsafeDeletes); err != nil {
 		return err
 	}
 
@@ -241,12 +241,70 @@ type SyncOptions struct {
 	OnTaskComplete     func(task types.SyncTask, err error)
 }
 
-func validateDeletionSafety(tasks []types.SyncTask, localFileCount, remoteFileCount int, cfg *config.Config, allowUnsafe bool) error {
+// A delete with an identical copy on the other side is a move, not a loss.
+func unpairedDeletions(tasks []types.SyncTask, localFiles types.LocalFileMap, remoteFiles types.DriveFileMap) []types.SyncTask {
+	deletedLocal := make(map[string]struct{})
+	deletedRemote := make(map[string]struct{})
+	for _, task := range tasks {
+		switch task.Action {
+		case types.ActionDeleteLocal:
+			deletedLocal[task.FilePath] = struct{}{}
+		case types.ActionDeleteRemote:
+			deletedRemote[task.FilePath] = struct{}{}
+		}
+	}
+
+	localCopies := make(map[string]int)
+	for path, local := range localFiles {
+		_, deleting := deletedLocal[path]
+		if local.IsDirectory || deleting || remoteFiles[path] != nil {
+			continue
+		}
+		localCopies[local.MD5Checksum]++
+	}
+	remoteCopies := make(map[string]int)
+	for path, remote := range remoteFiles {
+		_, deleting := deletedRemote[path]
+		if remote.IsDirectory || deleting || localFiles[path] != nil {
+			continue
+		}
+		remoteCopies[remote.MD5Checksum]++
+	}
+
+	unpaired := make([]types.SyncTask, 0, len(tasks))
+	for _, task := range tasks {
+		switch task.Action {
+		case types.ActionDeleteRemote:
+			remote := remoteFiles[task.FilePath]
+			if remote != nil && !remote.IsDirectory && takeCopy(localCopies, remote.MD5Checksum) {
+				continue
+			}
+		case types.ActionDeleteLocal:
+			local := localFiles[task.FilePath]
+			if local != nil && !local.IsDirectory && takeCopy(remoteCopies, local.MD5Checksum) {
+				continue
+			}
+		}
+		unpaired = append(unpaired, task)
+	}
+	return unpaired
+}
+
+func takeCopy(copies map[string]int, checksum string) bool {
+	if checksum == "" || copies[checksum] == 0 {
+		return false
+	}
+	copies[checksum]--
+	return true
+}
+
+func validateDeletionSafety(tasks []types.SyncTask, localFiles types.LocalFileMap, remoteFiles types.DriveFileMap, cfg *config.Config, allowUnsafe bool) error {
 	if allowUnsafe {
 		return nil
 	}
+	localFileCount, remoteFileCount := len(localFiles), len(remoteFiles)
 	deletions, localDeletions, remoteDeletions := 0, 0, 0
-	for _, task := range tasks {
+	for _, task := range unpairedDeletions(tasks, localFiles, remoteFiles) {
 		switch task.Action {
 		case types.ActionDeleteLocal:
 			deletions++
